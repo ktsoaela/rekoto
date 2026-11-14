@@ -16,10 +16,10 @@ describe('resolveWallpaperTarget', () => {
     const r = resolveWallpaperTarget(
       { path: 'C:\\gone\\old.jpg', style: '6', tile: '0', source: 'C:\\gone\\old.jpg' },
       [],
-      ['C:\\Users\\me\\Pictures\\IMG_1033.jpg', 'C:\\app\\studio-wallpaper.png'],
+      ['C:\\Users\\me\\Pictures\\wall.jpg', 'C:\\app\\studio-wallpaper.png'],
       () => false
     )
-    assert.equal(r?.path, 'C:\\Users\\me\\Pictures\\IMG_1033.jpg')
+    assert.equal(r?.path, 'C:\\Users\\me\\Pictures\\wall.jpg')
     assert.equal(r?.style, '6')
   })
 
