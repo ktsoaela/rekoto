@@ -3,6 +3,7 @@ import { execFile, execFileSync, spawn, type ChildProcessWithoutNullStreams } fr
 import fs from 'fs'
 import path from 'path'
 import type { CleanDesktopConfig } from '@shared/types'
+import { listWallpaperBackups, resolveWallpaperTarget, type WallpaperRef } from './wallpaper-restore'
 
 /**
  * Clean desktop mode (Windows): swap the wallpaper, hide desktop icons and the taskbar, and
@@ -120,6 +121,13 @@ function Save-State([object]$state, [string]$StateFile) {
 
 function Test-Ours([string]$p) { return ($p -and ($p -like '*studio-wallpaper*')) }
 
+function Find-Backup([string]$BackupDir) {
+  $f = Get-ChildItem -LiteralPath $BackupDir -Filter 'original-wallpaper.*' -ErrorAction SilentlyContinue |
+    Where-Object { $_.Extension -ne '.json' } | Select-Object -First 1
+  if ($f) { return [string]$f.FullName }
+  return ''
+}
+
 function Invoke-Apply($a, [string]$StateFile, [string]$BackupDir) {
   $state = [ordered]@{ wallpaper = $null; iconsHidden = $false; taskbarHidden = $false; minimized = @() }
   if ($a.wallpaper) {
@@ -132,16 +140,29 @@ function Invoke-Apply($a, [string]$StateFile, [string]$BackupDir) {
         $m = [IO.File]::ReadAllText($meta) | ConvertFrom-Json
         $state.wallpaper = [ordered]@{ path = [string]$m.path; style = [string]$m.style; tile = [string]$m.tile; source = [string]$m.source }
       } else {
-        $state.wallpaper = [ordered]@{ path = ''; style = '10'; tile = '0'; source = '' }
+        # Meta missing: keep the on-disk backup if we still have one — never invent an empty path
+        # (that used to clear the user's wallpaper on restore).
+        $bak = Find-Backup $BackupDir
+        $state.wallpaper = [ordered]@{ path = $bak; style = '10'; tile = '0'; source = $bak }
       }
     } else {
       $backup = ''
       if ($cur -and (Test-Path -LiteralPath $cur)) {
         $ext = [IO.Path]::GetExtension($cur)
         if (-not $ext) { $ext = '.jpg' }
-        Get-ChildItem -LiteralPath $BackupDir -Filter 'original-wallpaper.*' -ErrorAction SilentlyContinue | Where-Object { $_.Extension -ne '.json' } | Remove-Item -Force -ErrorAction SilentlyContinue
         $backup = Join-Path $BackupDir ('original-wallpaper' + $ext)
-        Copy-Item -LiteralPath $cur -Destination $backup -Force
+        $curFull = [IO.Path]::GetFullPath($cur)
+        $bakFull = [IO.Path]::GetFullPath($backup)
+        if ($curFull -eq $bakFull) {
+          # Wallpaper already points at our backup file — leave it alone.
+        } else {
+          $tmp = $backup + '.tmp'
+          Copy-Item -LiteralPath $cur -Destination $tmp -Force
+          Get-ChildItem -LiteralPath $BackupDir -Filter 'original-wallpaper.*' -ErrorAction SilentlyContinue |
+            Where-Object { $_.Extension -ne '.json' -and $_.FullName -ne $tmp } |
+            Remove-Item -Force -ErrorAction SilentlyContinue
+          Move-Item -LiteralPath $tmp -Destination $backup -Force
+        }
       }
       $state.wallpaper = [ordered]@{ path = $backup; style = [string]$p.WallpaperStyle; tile = [string]$p.TileWallpaper; source = $cur }
       [IO.File]::WriteAllText($meta, ($state.wallpaper | ConvertTo-Json -Compress), (New-Object System.Text.UTF8Encoding $false))
@@ -169,18 +190,23 @@ function Invoke-Apply($a, [string]$StateFile, [string]$BackupDir) {
 }
 
 function Invoke-Restore($a) {
-  if ($a.wallpaper) {
-    $target = [string]$a.wallpaper.path
+  if ($null -ne $a.wallpaper) {
+    $pathWas = [string]$a.wallpaper.path
     $src = [string]$a.wallpaper.source
+    $target = $pathWas
     # Prefer the user's real file when it still exists (keeps Settings > Personalization accurate).
     if ($src -and ($src -notlike '*TranscodedWallpaper*') -and -not (Test-Ours $src) -and (Test-Path -LiteralPath $src)) { $target = $src }
     if ($target -and -not (Test-Path -LiteralPath $target)) { $target = '' }
     $style = [string]$a.wallpaper.style; if (-not $style) { $style = '10' }
     $tile = [string]$a.wallpaper.tile; if (-not $tile) { $tile = '0' }
-    Set-ItemProperty -Path $desk -Name WallpaperStyle -Value $style
-    Set-ItemProperty -Path $desk -Name TileWallpaper -Value $tile
-    # Empty path = the user had a solid colour background.
-    [void][LcDesk]::SetWallpaper($target)
+    # Only clear the wallpaper for a genuine solid-colour desktop (empty path + empty source).
+    # A missing file with a remembered path must not wipe the user's background.
+    $solid = (-not $pathWas) -and (-not $src)
+    if ($target -or $solid) {
+      Set-ItemProperty -Path $desk -Name WallpaperStyle -Value $style
+      Set-ItemProperty -Path $desk -Name TileWallpaper -Value $tile
+      [void][LcDesk]::SetWallpaper($target)
+    }
   }
   if ($a.iconsHidden) { [void][LcDesk]::SetIcons($true) }
   if ($a.taskbarHidden) { [void][LcDesk]::SetTaskbar($true) }
@@ -417,11 +443,9 @@ function readStateFile(): CleanState | null {
   }
 }
 
-/** Old state files (before backups existed) may lack a usable path; recover from Windows history. */
-function repairMissingWallpaper(state: CleanState): CleanState {
-  if (!state.wallpaper || state.wallpaper.path || state.wallpaper.source !== undefined) return state
+function wallpaperHistoryPaths(): string[] {
   try {
-    const prev = execFileSync(
+    const out = execFileSync(
       'powershell.exe',
       [
         '-NoProfile',
@@ -430,19 +454,42 @@ function repairMissingWallpaper(state: CleanState): CleanState {
         [
           "$hist = Get-ItemProperty 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Wallpapers' -ErrorAction SilentlyContinue",
           'if ($hist) {',
-          "  foreach ($k in 'BackgroundHistoryPath0','BackgroundHistoryPath1','BackgroundHistoryPath2','BackgroundHistoryPath3') {",
+          "  foreach ($k in 'BackgroundHistoryPath0','BackgroundHistoryPath1','BackgroundHistoryPath2','BackgroundHistoryPath3','BackgroundHistoryPath4') {",
           '    $p = [string]$hist.$k',
-          "    if ($p -and $p -notlike '*studio-wallpaper*' -and (Test-Path -LiteralPath $p)) { Write-Output $p; break }",
+          "    if ($p -and $p -notlike '*studio-wallpaper*' -and $p -notlike '*TranscodedWallpaper*' -and (Test-Path -LiteralPath $p)) { Write-Output $p }",
           '  }',
           '}'
         ].join('; ')
       ],
       { encoding: 'utf8', windowsHide: true, timeout: 10_000 }
-    ).trim()
-    return prev ? { ...state, wallpaper: { path: prev, style: state.wallpaper.style || '10', tile: state.wallpaper.tile || '0' } } : state
+    )
+    return out
+      .split(/\r?\n/)
+      .map((l) => l.trim())
+      .filter(Boolean)
   } catch {
-    return state
+    return []
   }
+}
+
+/** Recover a usable wallpaper path from backups / Windows history before restore. */
+function repairMissingWallpaper(state: CleanState): CleanState {
+  if (!state.wallpaper) return state
+  let backups: string[] = []
+  try {
+    backups = listWallpaperBackups(fs.readdirSync(dir()), dir(), path.join).filter((p) => fs.existsSync(p))
+  } catch {
+    backups = []
+  }
+  const resolved = resolveWallpaperTarget(state.wallpaper as WallpaperRef, backups, wallpaperHistoryPaths(), (p) => {
+    try {
+      return fs.existsSync(p)
+    } catch {
+      return false
+    }
+  })
+  if (resolved === null) return { ...state, wallpaper: null }
+  return { ...state, wallpaper: resolved }
 }
 
 export function isSupported(): boolean {
