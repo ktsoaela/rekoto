@@ -13,6 +13,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - [ ] In-app update checks for local builds
 - [ ] More studio background presets
 
+## [1.0.1] - 2026-11-14
+
+### Fixed
+
+- Release CI uploads `Rekoto-Setup.exe` and browser extension zips to GitHub Releases (`--publish never` + `gh release upload`)
+
+### Changed
+
+- Product page Quick start links download the Windows installer and Chrome/Edge/Firefox extension packs
+
 ## [1.0.0] - 2026-11-14
 
 ### Added

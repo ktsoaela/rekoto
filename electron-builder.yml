@@ -13,6 +13,7 @@ extraResources:
     to: native-host
   - from: extensions
     to: extensions
+artifactName: Rekoto-Setup.${ext}
 win:
   target: nsis
   icon: build/icon.ico
@@ -21,3 +22,4 @@ nsis:
   allowToChangeInstallationDirectory: true
   shortcutName: Rekoto
   uninstallDisplayName: Rekoto
+  artifactName: Rekoto-Setup.${ext}

@@ -40,6 +40,8 @@ jobs:
     needs: build
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: windows-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
 
@@ -51,14 +53,37 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Build Windows installer
-        run: npm run dist
+      - name: Build extensions
+        run: npm run build:ext
 
-      - name: Upload installer
+      - name: Build Windows installer
+        run: npm run dist -- --publish never
+
+      - name: Package browser extensions
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path release-assets | Out-Null
+          Compress-Archive -Path extensions/chrome/* -DestinationPath release-assets/rekoto-extension-chrome.zip -Force
+          Compress-Archive -Path extensions/firefox/* -DestinationPath release-assets/rekoto-extension-firefox.zip -Force
+          Copy-Item dist/Rekoto-Setup.exe release-assets/Rekoto-Setup.exe -Force
+
+      - name: Upload release assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: pwsh
+        run: |
+          gh release upload "${{ github.ref_name }}" `
+            release-assets/Rekoto-Setup.exe `
+            release-assets/rekoto-extension-chrome.zip `
+            release-assets/rekoto-extension-firefox.zip `
+            --clobber
+
+      - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
           name: rekoto-windows
           path: |
-            dist/*.exe
-            dist/*.yml
+            release-assets/Rekoto-Setup.exe
+            release-assets/rekoto-extension-chrome.zip
+            release-assets/rekoto-extension-firefox.zip
           retention-days: 30

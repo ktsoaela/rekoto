@@ -52,13 +52,16 @@ npm run dist       # Windows installer into dist/ (uses build/icon.ico)
 
 If `npm install` did not download Electron, run `node node_modules/electron/install.js`.
 
-| Goal | Command |
+| Goal | Command / link |
 | --- | --- |
+| Download Windows installer | [Rekoto-Setup.exe](https://github.com/ktsoaela/rekoto/releases/latest/download/Rekoto-Setup.exe) |
+| Chrome / Edge extension | [rekoto-extension-chrome.zip](https://github.com/ktsoaela/rekoto/releases/latest/download/rekoto-extension-chrome.zip) |
+| Firefox extension | [rekoto-extension-firefox.zip](https://github.com/ktsoaela/rekoto/releases/latest/download/rekoto-extension-firefox.zip) |
 | Dev app | `npm run dev` |
 | Rebuild icons | `npm run icons` |
 | Build extensions | `npm run build:ext` |
 | Typecheck | `npm run typecheck` |
-| Windows installer | `npm run dist` → `dist/` |
+| Windows installer (local) | `npm run dist` → `dist/Rekoto-Setup.exe` |
 
 ### Icons
 
