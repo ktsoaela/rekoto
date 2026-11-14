@@ -1,0 +1,19 @@
+{
+  "manifest_version": 3,
+  "name": "Loom Clone Recorder",
+  "version": "0.1.0",
+  "description": "Start recordings of this window, mask passwords and hide bookmarks while recording with the Loom Clone desktop app.",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAqOnPvSJpeAAH1+su5UbjIG7pdSU899hBx2hkVmIHPeEhCxATfFMmndqoVp3TYKJGFYEaHhQST50Z5DcilskwYMwJzYgYQBQK5Wfgn74xIrG9Q80wgdZL4v2dGB41RvXZRLvBhKIQ5WnvhiCPeSkf7HS6fX9twDeXHsyMA14uFErDOG/Ic/HDBTkOS403h8phftae6sUZcSkN9q6tFzGw1sp6jbtfu0E4MZI5hKx+oKGyqpybmDgS4Zka8qppLph91F44Si3T+hLbsyiLYA4KE44M8V5suCG45RtHbHm6KoAjXI5G1urwdkYoTG+Z24GiMyYxpZ7l7Mv3kUd2a59itwIDAQAB",
+  "permissions": ["nativeMessaging", "tabs", "storage"],
+  "host_permissions": ["<all_urls>"],
+  "background": { "service_worker": "background.js" },
+  "action": { "default_title": "Loom Clone", "default_popup": "popup.html" },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "run_at": "document_start",
+      "all_frames": true
+    }
+  ]
+}

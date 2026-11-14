@@ -1,0 +1,21 @@
+{
+  "manifest_version": 3,
+  "name": "Loom Clone Recorder",
+  "version": "0.1.0",
+  "description": "Start recordings of this window, mask passwords and hide bookmarks while recording with the Loom Clone desktop app.",
+  "browser_specific_settings": {
+    "gecko": { "id": "recorder@loomclone.app", "strict_min_version": "115.0" }
+  },
+  "permissions": ["nativeMessaging", "tabs", "storage"],
+  "host_permissions": ["<all_urls>"],
+  "background": { "scripts": ["background.js"] },
+  "action": { "default_title": "Loom Clone", "default_popup": "popup.html" },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "run_at": "document_start",
+      "all_frames": true
+    }
+  ]
+}

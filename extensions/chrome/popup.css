@@ -1,0 +1,13 @@
+body { width: 290px; margin: 0; padding: 14px; font: 13px 'Segoe UI', system-ui, sans-serif; background: #0f1117; color: #e7e9ee; }
+header { font-weight: 700; font-size: 15px; display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+.logo { width: 14px; height: 14px; border-radius: 50%; background: conic-gradient(#6366f1, #0ea5e9, #6366f1); }
+.status { padding: 6px 10px; border-radius: 8px; background: #1e2230; margin-bottom: 10px; }
+.status.ok { color: #86efac; }
+.status.bad { color: #fca5a5; }
+.status.rec { color: #fda4af; }
+button { font: inherit; color: #e7e9ee; background: #1e2230; border: 1px solid #2a2f3e; border-radius: 8px; padding: 9px 12px; cursor: pointer; width: 100%; margin-bottom: 6px; display: flex; align-items: center; justify-content: center; gap: 8px; }
+button.primary { background: #f43f5e; border-color: #f43f5e; color: #fff; font-weight: 600; }
+.dot { width: 9px; height: 9px; border-radius: 50%; background: #fff; }
+.hint, .help { color: #8b92a6; font-size: 12px; line-height: 1.45; margin: 4px 0 10px; }
+.opt { display: flex; gap: 6px; align-items: center; font-size: 12px; color: #c4c8d4; }
+.hidden { display: none !important; }
