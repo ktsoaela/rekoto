@@ -1,42 +1,82 @@
-# Loom Clone
+<div align="center">
+  <img src="assets/rekoto-logo.png" alt="Rekoto" width="128" style="background:#ffffff;padding:16px;border-radius:12px" />
 
-A local, private screen recorder for Windows, built with Electron. It records your screen, a single window or app, or just your camera, with a round camera bubble of you. Videos are saved as MP4 files on your PC, and there is a library to watch them.
+  <h1>Rekoto</h1>
+
+  <p><strong>A local, private screen recorder for Windows — screen, window, or camera, saved as MP4 on your PC.</strong></p>
+
+  <p>
+    <img alt="Stack" src="https://img.shields.io/badge/Electron-React_TypeScript-436659?style=flat-square" />
+    <img alt="Platform" src="https://img.shields.io/badge/Windows-10+-547f72?style=flat-square" />
+    <img alt="Privacy" src="https://img.shields.io/badge/Local_only-no_cloud-375348?style=flat-square" />
+  </p>
+</div>
+
+**Author:** [Khotso Tsoaela](https://github.com/ktsoaela) (`@ktsoaela`)
+
+---
+
+**Rekoto** records your screen, a single window or app, or just your camera, with a round camera bubble of you. Videos stay as MP4 files in a library on your machine.
 
 Nothing is uploaded. There are no accounts and no cloud.
 
-## Features
+---
 
-- **Record the full screen, one window or app, or camera only.** Microphone and system audio are optional, with a mic level meter.
-- **Rounded camera bubble.** It is draggable and has four sizes (hover it to change the size). The bubble on your screen is hidden from the capture, and the app draws the camera into the video at the same spot.
-- **Studio background.** The captured window is placed on your branded background: a gradient, a solid colour or your own image, plus an optional company logo and caption. The real wallpaper and other apps never appear in the video.
-- **Clean desktop mode (Windows).** While recording, it swaps the wallpaper for your studio background, hides desktop icons, minimizes other apps and can hide the taskbar. You can pick windows to keep visible. Everything is restored when you stop. If the app crashes, it is restored the next time the app starts.
-- **Browser privacy (Chrome, Edge, Firefox extensions):**
-  - Masks password fields, one-time codes and card numbers while recording. A field stays masked even after a "show password" toggle turns it into plain text.
-  - Crops out the tabs, address bar and bookmarks bar, so only the web page is in the video.
-  - Lets you start, pause and stop a recording of the current browser window from the toolbar button.
-- **Floating controls.** A timer plus pause, stop and discard buttons. They never appear in the recording. Shortcuts: `Alt+Shift+S` stops, `Alt+Shift+P` pauses or resumes, `Alt+Shift+C` discards.
-- **Library.** Thumbnails, durations, search, an in-app player, rename, show in folder, and delete (moves the file to the Recycle Bin).
-- **Save folder.** The default is `Videos\Loom Clone`. You can change it in Settings or from the Library header.
+## Why Rekoto
 
-## Getting started
+- **Full screen, one window, or camera only.** Microphone and system audio are optional, with a mic level meter.
+- **Rounded camera bubble.** Draggable, four sizes (hover to change). The on-screen bubble is hidden from capture; Rekoto draws the camera into the video at the same spot.
+- **Studio background.** Place the captured window on a branded background (gradient, solid colour, or your image), plus an optional company logo and caption.
+- **Clean desktop mode (Windows).** While recording, swap the wallpaper, hide desktop icons, minimize other apps, and optionally hide the taskbar. Everything restores when you stop (and after a crash, on next launch).
+- **Browser privacy (Chrome, Edge, Firefox).** Mask passwords, one-time codes and card numbers; crop tabs and the address bar; start, pause and stop from the toolbar.
+- **Floating controls.** Timer plus pause, stop and discard — never in the recording. Shortcuts: `Alt+Shift+S` stop, `Alt+Shift+P` pause/resume, `Alt+Shift+C` discard.
+- **Library.** Thumbnails, durations, search, in-app player, rename, show in folder, delete (Recycle Bin).
+- **Save folder.** Default `Videos\Rekoto`. Change it in Settings or from the Library header.
+
+---
+
+## Quick start
+
+**Requirements:** Node.js 20+, Windows 10 version 2004 or later (for overlay capture protection).
 
 ```bash
 npm install
+npm run icons      # taskbar / desktop icon assets
 npm run dev        # run in development
-npm run build      # build the app bundles into out/
-npm run dist       # build a Windows installer into dist/
+npm run build      # build app bundles into out/
+npm run dist       # Windows installer into dist/ (uses build/icon.ico)
 ```
 
 If `npm install` did not download Electron, run `node node_modules/electron/install.js`.
 
-## Installing the browser extensions
+| Goal | Command |
+| --- | --- |
+| Dev app | `npm run dev` |
+| Rebuild icons | `npm run icons` |
+| Build extensions | `npm run build:ext` |
+| Windows installer | `npm run dist` |
 
-When the app starts, it registers its native-messaging "browser connection" for Chrome, Edge and Firefox (current user only). You can check its status in **Settings → Browser privacy**.
+### Icons
 
-- **Chrome or Edge:** open `chrome://extensions` (or `edge://extensions`), turn on Developer mode, click **Load unpacked** and select `extensions/chrome`.
-- **Firefox:** open `about:debugging#/runtime/this-firefox`, click **Load Temporary Add-on** and select `extensions/firefox/manifest.json`.
+| File | Use |
+| --- | --- |
+| `build/icon.ico` | Windows taskbar, installer, and desktop shortcut |
+| `build/icon.png` | Electron window icon source (512×512) |
+| `assets/rekoto-logo.png` | README / brand mark |
+| `assets/Rekoto-Desktop.png` | Standalone 256×256 desktop icon PNG |
 
-The extension's toolbar popup shows whether the desktop app is connected. The shared extension source is in `extensions/shared`. After editing it, run `npm run build:ext`.
+---
+
+## Browser extensions
+
+When the app starts, it registers its native-messaging browser connection for Chrome, Edge and Firefox (current user only). Check status in **Settings → Browser privacy**.
+
+- **Chrome or Edge:** `chrome://extensions` (or `edge://extensions`) → Developer mode → Load unpacked → `extensions/chrome`.
+- **Firefox:** `about:debugging#/runtime/this-firefox` → Load Temporary Add-on → `extensions/firefox/manifest.json`.
+
+Shared extension source lives in `extensions/shared`. After editing it, run `npm run build:ext`.
+
+---
 
 ## How it works
 
@@ -49,16 +89,18 @@ Browser extension ──native messaging──> host.js ──named pipe──> 
                        MediaRecorder ──chunks──> temp file ──ffmpeg──> MP4 in your save folder ──> library
 ```
 
-- `src/main/recording.ts`: the recording session, plus the bubble, controls, countdown and recorder windows.
-- `src/main/clean-desktop.ts`: wallpaper, desktop icons, taskbar and window minimizing, with crash-safe restore.
-- `src/main/native-bridge.ts`: the named-pipe server, plus native-host registration for each browser.
-- `src/main/library.ts` and `src/main/ffmpeg.ts`: listing videos, thumbnails, duration and MP4 conversion.
-- `src/renderer/src/studio/`: the compositor and the studio background renderer.
-- `native-host/host.js`: the native-messaging host, run with Electron's bundled Node.
-- `extensions/`: the Chrome (MV3) and Firefox (MV3) extensions.
+| Area | Path |
+| --- | --- |
+| Recording session | `src/main/recording.ts` |
+| Clean desktop | `src/main/clean-desktop.ts` |
+| Browser bridge | `src/main/native-bridge.ts` |
+| Library / ffmpeg | `src/main/library.ts`, `src/main/ffmpeg.ts` |
+| Studio compositor | `src/renderer/src/studio/` |
+| Native host | `native-host/host.js` |
+| Extensions | `extensions/` |
 
 ### Notes
 
-- Hardware video encoding is turned off by default. On some Windows GPU drivers it makes MediaRecorder hang without producing any data. To try hardware encoding, set `LC_HW_ENCODE=1`.
-- The overlay windows (camera bubble, controls, countdown) are excluded from capture with `setContentProtection`. This needs Windows 10 version 2004 or later.
-- Password masking covers normal page inputs. Fields inside closed shadow DOMs, or drawn by a password manager in its own window, are not masked. Use clean-desktop mode to minimize those windows.
+- Hardware video encoding is off by default (some Windows GPU drivers hang MediaRecorder). To try it: `Rekoto_HW_ENCODE=1`.
+- Overlay windows use `setContentProtection` (Windows 10 2004+).
+- Password masking covers normal page inputs. Fields in closed shadow DOMs, or in a password-manager window, are not masked — use clean-desktop mode to minimize those windows.

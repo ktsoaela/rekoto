@@ -8,7 +8,8 @@ const EVENT_CHANNELS = new Set([
   'library:saved',
   'ext:changed',
   'recorder:command',
-  'recorder:layout'
+  'recorder:layout',
+  'countdown:phase'
 ])
 
 const api = {

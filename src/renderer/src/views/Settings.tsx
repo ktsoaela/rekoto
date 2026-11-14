@@ -1,216 +1,300 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import type { BackgroundConfig, ExtensionInfo, LogoPosition, Settings } from '@shared/types'
 import BackgroundPreview from '../components/BackgroundPreview'
-import { Toggle } from './Record'
+import Icon from '../components/Icon'
 
 interface Props {
   settings: Settings
   update: (p: Partial<Settings>) => Promise<Settings>
 }
 
-const PRESETS: Array<Pick<BackgroundConfig, 'kind' | 'color1' | 'color2' | 'angle'>> = [
-  { kind: 'gradient', color1: '#4f46e5', color2: '#0ea5e9', angle: 135 },
-  { kind: 'gradient', color1: '#f97316', color2: '#db2777', angle: 135 },
-  { kind: 'gradient', color1: '#10b981', color2: '#0f766e', angle: 160 },
-  { kind: 'gradient', color1: '#1f2937', color2: '#111827', angle: 180 },
-  { kind: 'solid', color1: '#f3f4f6', color2: '#f3f4f6', angle: 0 },
-  { kind: 'solid', color1: '#0b1220', color2: '#0b1220', angle: 0 }
+const PRESETS: Array<{ name: string } & Pick<BackgroundConfig, 'kind' | 'color1' | 'color2' | 'angle'>> = [
+  { name: 'Black & gold', kind: 'gradient', color1: '#0d0d0d', color2: '#3a2f00', angle: 135 },
+  { name: 'Yellow', kind: 'gradient', color1: '#ffc400', color2: '#ffdf6b', angle: 135 },
+  { name: 'Onyx', kind: 'solid', color1: '#141414', color2: '#141414', angle: 0 },
+  { name: 'Navy', kind: 'gradient', color1: '#0b1f3a', color2: '#1d4ed8', angle: 135 },
+  { name: 'Slate', kind: 'gradient', color1: '#1e293b', color2: '#475569', angle: 160 },
+  { name: 'Ocean', kind: 'gradient', color1: '#0f766e', color2: '#0369a1', angle: 135 },
+  { name: 'Graphite', kind: 'solid', color1: '#111827', color2: '#111827', angle: 0 },
+  { name: 'Paper', kind: 'solid', color1: '#f1f5f9', color2: '#f1f5f9', angle: 0 },
+  { name: 'Indigo', kind: 'gradient', color1: '#312e81', color2: '#6366f1', angle: 135 }
+]
+
+const SECTIONS = [
+  { id: 'workspace', label: 'Workspace', icon: 'layers' },
+  { id: 'storage', label: 'Storage', icon: 'folder' },
+  { id: 'recording', label: 'Recording', icon: 'record' },
+  { id: 'brand', label: 'Brand background', icon: 'image' },
+  { id: 'desktop', label: 'Clean desktop', icon: 'sparkle' },
+  { id: 'privacy', label: 'Browser privacy', icon: 'shield' }
 ]
 
 export default function SettingsView({ settings, update }: Props) {
   const bg = settings.background
   const setBg = (patch: Partial<BackgroundConfig>): void => void update({ background: { ...bg, ...patch } })
   const pickImage = async (): Promise<string | null> => window.api.invoke<string | null>('dialog:image')
+  const [name, setName] = useState(settings.workspaceName)
+  const [caption, setCaption] = useState(bg.text)
 
   return (
-    <div className="page settings">
-      <header className="page-head">
-        <h1>Settings</h1>
+    <div className="page">
+      <header className="page-header">
+        <div>
+          <h1>Settings</h1>
+          <p className="page-sub">Changes are saved automatically.</p>
+        </div>
       </header>
 
-      <section className="panel">
-        <h3>Where videos are saved</h3>
-        <div className="row">
-          <code className="path">{settings.saveFolder}</code>
-          <button
-            onClick={async () => {
-              const f = await window.api.invoke<string | null>('dialog:folder')
-              if (f) await update({ saveFolder: f })
-            }}
-          >
-            Change folder
-          </button>
-          <button onClick={() => void window.api.invoke('library:openFolder')}>Open</button>
-        </div>
-        <p className="muted small">The library shows every video in this folder. Recordings are saved as MP4 (H.264).</p>
-      </section>
+      <div className="settings-layout">
+        <nav className="settings-nav" aria-label="Settings sections">
+          {SECTIONS.map((s) => (
+            <a key={s.id} href={`#s-${s.id}`} onClick={(e) => {
+              e.preventDefault()
+              document.getElementById(`s-${s.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+            }}>
+              <Icon name={s.icon} size={16} /> {s.label}
+            </a>
+          ))}
+        </nav>
 
-      <section className="panel">
-        <h3>Recording</h3>
-        <div className="row">
-          <label className="field">
-            <span>Resolution</span>
-            <select value={settings.resolution} onChange={(e) => void update({ resolution: Number(e.target.value) as Settings['resolution'] })}>
-              <option value={720}>720p</option>
-              <option value={1080}>1080p</option>
-              <option value={1440}>1440p</option>
-            </select>
-          </label>
-          <label className="field">
-            <span>Frame rate</span>
-            <select value={settings.fps} onChange={(e) => void update({ fps: Number(e.target.value) as Settings['fps'] })}>
-              <option value={30}>30 fps</option>
-              <option value={60}>60 fps</option>
-            </select>
-          </label>
-        </div>
-        <Toggle label="3-second countdown" checked={settings.countdown} onChange={(v) => void update({ countdown: v })} />
-      </section>
-
-      <section className="panel">
-        <h3>Studio background</h3>
-        <p className="muted small">
-          Drawn behind the captured window inside the video, and used as your wallpaper in clean-desktop mode. Use a company logo or branded image.
-        </p>
-        <div className="bg-editor">
-          <BackgroundPreview bg={bg} />
-          <div className="bg-controls">
-            <div className="presets">
-              {PRESETS.map((p, i) => (
-                <button
-                  key={i}
-                  className="preset"
-                  style={{ background: p.kind === 'solid' ? p.color1 : `linear-gradient(${p.angle}deg, ${p.color1}, ${p.color2})` }}
-                  onClick={() => setBg(p)}
-                />
-              ))}
-            </div>
-            <label className="field">
-              <span>Type</span>
-              <select value={bg.kind} onChange={(e) => setBg({ kind: e.target.value as BackgroundConfig['kind'] })}>
-                <option value="gradient">Gradient</option>
-                <option value="solid">Solid color</option>
-                <option value="image">Image</option>
-              </select>
-            </label>
-            {bg.kind !== 'image' ? (
-              <div className="row">
-                <label className="field color">
-                  <span>{bg.kind === 'gradient' ? 'From' : 'Color'}</span>
-                  <input type="color" value={bg.color1} onChange={(e) => setBg({ color1: e.target.value })} />
-                </label>
-                {bg.kind === 'gradient' && (
-                  <>
-                    <label className="field color">
-                      <span>To</span>
-                      <input type="color" value={bg.color2} onChange={(e) => setBg({ color2: e.target.value })} />
-                    </label>
-                    <label className="field">
-                      <span>Angle {bg.angle}°</span>
-                      <input type="range" min={0} max={360} value={bg.angle} onChange={(e) => setBg({ angle: Number(e.target.value) })} />
-                    </label>
-                  </>
-                )}
-              </div>
-            ) : (
-              <div className="row">
-                <button
-                  onClick={async () => {
-                    const p = await pickImage()
-                    if (p) setBg({ imagePath: p })
-                  }}
-                >
-                  {bg.imagePath ? 'Change image' : 'Choose image'}
-                </button>
-                {bg.imagePath && <span className="muted small ellipsis">{bg.imagePath}</span>}
-              </div>
-            )}
-            <div className="row">
-              <button
-                onClick={async () => {
+        <div className="settings-body">
+          <Section id="workspace" title="Workspace" desc="How your organization appears in the app and in videos.">
+            <Row label="Workspace name" desc="Shown in the sidebar.">
+              <input className="input" value={name} onChange={(e) => setName(e.target.value)} onBlur={() => void update({ workspaceName: name.trim() })} placeholder="Company or team name" />
+            </Row>
+            <Row label="Company logo" desc="Used in the sidebar and on the brand background.">
+              <div className="row-actions">
+                <button className="btn btn-secondary" onClick={async () => {
                   const p = await pickImage()
                   if (p) setBg({ logoPath: p })
-                }}
-              >
-                {bg.logoPath ? 'Change logo' : 'Add logo'}
-              </button>
-              {bg.logoPath && <button className="link" onClick={() => setBg({ logoPath: null })}>Remove logo</button>}
-            </div>
-            {bg.logoPath && (
-              <div className="row">
-                <label className="field">
-                  <span>Logo position</span>
-                  <select value={bg.logoPosition} onChange={(e) => setBg({ logoPosition: e.target.value as LogoPosition })}>
-                    <option value="top-left">Top left</option>
-                    <option value="top-right">Top right</option>
-                    <option value="bottom-left">Bottom left</option>
-                    <option value="bottom-right">Bottom right</option>
-                    <option value="center">Center</option>
-                  </select>
-                </label>
-                <label className="field">
-                  <span>Logo size</span>
-                  <input type="range" min={0.04} max={0.4} step={0.01} value={bg.logoScale} onChange={(e) => setBg({ logoScale: Number(e.target.value) })} />
-                </label>
+                }}>
+                  <Icon name="image" /> {bg.logoPath ? 'Replace logo' : 'Upload logo'}
+                </button>
+                {bg.logoPath && <button className="btn btn-ghost" onClick={() => setBg({ logoPath: null })}>Remove</button>}
               </div>
-            )}
-            <div className="row">
-              <label className="field grow">
-                <span>Caption (optional)</span>
-                <input type="text" value={bg.text} placeholder="Company name or tagline" onChange={(e) => setBg({ text: e.target.value })} />
-              </label>
-              <label className="field color">
-                <span>Text</span>
-                <input type="color" value={bg.textColor} onChange={(e) => setBg({ textColor: e.target.value })} />
-              </label>
+            </Row>
+          </Section>
+
+          <Section id="storage" title="Storage" desc="Recordings are stored only on this computer.">
+            <Row label="Save folder" desc="The library lists every video in this folder.">
+              <div className="path-field">
+                <code title={settings.saveFolder}>{settings.saveFolder}</code>
+                <button className="btn btn-secondary" onClick={async () => {
+                  const f = await window.api.invoke<string | null>('dialog:folder')
+                  if (f) await update({ saveFolder: f })
+                }}>Change…</button>
+                <button className="btn-icon" title="Open in Explorer" onClick={() => void window.api.invoke('library:openFolder')}>
+                  <Icon name="external" size={16} />
+                </button>
+              </div>
+            </Row>
+            <Row label="File format" desc="H.264 video with AAC audio. It plays in every common player.">
+              <span className="pill">MP4</span>
+            </Row>
+          </Section>
+
+          <Section id="recording" title="Recording" desc="Quality and start behavior.">
+            <Row label="Resolution" desc="Output video height.">
+              <select className="input" value={settings.resolution} onChange={(e) => void update({ resolution: Number(e.target.value) as Settings['resolution'] })}>
+                <option value={720}>720p (HD)</option>
+                <option value={1080}>1080p (Full HD)</option>
+                <option value={1440}>1440p (QHD)</option>
+              </select>
+            </Row>
+            <Row label="Frame rate" desc="Use 60 fps for fast motion or demos.">
+              <select className="input" value={settings.fps} onChange={(e) => void update({ fps: Number(e.target.value) as Settings['fps'] })}>
+                <option value={30}>30 fps</option>
+                <option value={60}>60 fps</option>
+              </select>
+            </Row>
+            <Row label="Countdown" desc="Wait 3 seconds before recording starts.">
+              <Switch checked={settings.countdown} onChange={(v) => void update({ countdown: v })} />
+            </Row>
+          </Section>
+
+          <Section id="brand" title="Brand background" desc="Shown behind captured windows in your videos, and used as your wallpaper in clean-desktop mode.">
+            <div className="brand-editor">
+              <div className="brand-preview">
+                <BackgroundPreview bg={bg} />
+                <span className="caption">Preview</span>
+              </div>
+              <div className="brand-controls">
+                <div className="field">
+                  <span className="field-label">Presets</span>
+                  <div className="swatches">
+                    {PRESETS.map((p) => (
+                      <button
+                        key={p.name}
+                        className="swatch"
+                        title={p.name}
+                        aria-label={p.name}
+                        style={{ background: p.kind === 'solid' ? p.color1 : `linear-gradient(${p.angle}deg, ${p.color1}, ${p.color2})` }}
+                        onClick={() => setBg({ kind: p.kind, color1: p.color1, color2: p.color2, angle: p.angle })}
+                      />
+                    ))}
+                  </div>
+                </div>
+                <div className="field">
+                  <span className="field-label">Style</span>
+                  <div className="seg seg-text">
+                    {(['gradient', 'solid', 'image'] as const).map((k) => (
+                      <button key={k} className={bg.kind === k ? 'active' : ''} onClick={() => setBg({ kind: k })}>
+                        {k === 'gradient' ? 'Gradient' : k === 'solid' ? 'Solid' : 'Image'}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                {bg.kind !== 'image' ? (
+                  <div className="field-row">
+                    <label className="field">
+                      <span className="field-label">{bg.kind === 'gradient' ? 'Start color' : 'Color'}</span>
+                      <ColorInput value={bg.color1} onChange={(v) => setBg({ color1: v })} />
+                    </label>
+                    {bg.kind === 'gradient' && (
+                      <>
+                        <label className="field">
+                          <span className="field-label">End color</span>
+                          <ColorInput value={bg.color2} onChange={(v) => setBg({ color2: v })} />
+                        </label>
+                        <label className="field grow">
+                          <span className="field-label">Angle <b>{bg.angle}°</b></span>
+                          <input type="range" min={0} max={360} value={bg.angle} onChange={(e) => setBg({ angle: Number(e.target.value) })} />
+                        </label>
+                      </>
+                    )}
+                  </div>
+                ) : (
+                  <div className="field">
+                    <span className="field-label">Background image</span>
+                    <div className="row-actions">
+                      <button className="btn btn-secondary" onClick={async () => {
+                        const p = await pickImage()
+                        if (p) setBg({ imagePath: p })
+                      }}>
+                        <Icon name="image" /> {bg.imagePath ? 'Replace image' : 'Choose image'}
+                      </button>
+                      {bg.imagePath && <span className="muted small ellipsis">{bg.imagePath.split(/[\\/]/).pop()}</span>}
+                    </div>
+                  </div>
+                )}
+                {bg.logoPath && (
+                  <div className="field-row">
+                    <label className="field">
+                      <span className="field-label">Logo position</span>
+                      <select className="input" value={bg.logoPosition} onChange={(e) => setBg({ logoPosition: e.target.value as LogoPosition })}>
+                        <option value="top-left">Top left</option>
+                        <option value="top-right">Top right</option>
+                        <option value="bottom-left">Bottom left</option>
+                        <option value="bottom-right">Bottom right</option>
+                        <option value="center">Center</option>
+                      </select>
+                    </label>
+                    <label className="field grow">
+                      <span className="field-label">Logo size</span>
+                      <input type="range" min={0.04} max={0.4} step={0.01} value={bg.logoScale} onChange={(e) => setBg({ logoScale: Number(e.target.value) })} />
+                    </label>
+                  </div>
+                )}
+                <div className="field-row">
+                  <label className="field grow">
+                    <span className="field-label">Caption</span>
+                    <input className="input" value={caption} placeholder="e.g. Acme Inc. · Product Team" onChange={(e) => setCaption(e.target.value)} onBlur={() => setBg({ text: caption })} />
+                  </label>
+                  <label className="field">
+                    <span className="field-label">Caption color</span>
+                    <ColorInput value={bg.textColor} onChange={(v) => setBg({ textColor: v })} />
+                  </label>
+                </div>
+                <div className="field-row">
+                  <label className="field grow">
+                    <span className="field-label">Frame padding</span>
+                    <input type="range" min={0} max={0.15} step={0.01} value={settings.studioPadding} onChange={(e) => void update({ studioPadding: Number(e.target.value) })} />
+                  </label>
+                  <label className="field grow">
+                    <span className="field-label">Corner radius</span>
+                    <input type="range" min={0} max={40} value={settings.cornerRadius} onChange={(e) => void update({ cornerRadius: Number(e.target.value) })} />
+                  </label>
+                </div>
+              </div>
             </div>
-            <div className="row">
-              <label className="field">
-                <span>Padding</span>
-                <input type="range" min={0} max={0.15} step={0.01} value={settings.studioPadding} onChange={(e) => void update({ studioPadding: Number(e.target.value) })} />
-              </label>
-              <label className="field">
-                <span>Corner radius</span>
-                <input type="range" min={0} max={40} value={settings.cornerRadius} onChange={(e) => void update({ cornerRadius: Number(e.target.value) })} />
-              </label>
-            </div>
-          </div>
+          </Section>
+
+          <Section id="desktop" title="Clean desktop" desc="For full-screen recordings. Everything is restored when you stop, and also after a crash.">
+            <Row label="Enable by default" desc="Turns on clean desktop for each new recording.">
+              <Switch checked={settings.cleanDesktopEnabled} onChange={(v) => void update({ cleanDesktopEnabled: v })} />
+            </Row>
+            {(
+              [
+                ['wallpaper', 'Replace wallpaper', 'Only during recording: show your brand background as the wallpaper, then restore yours.'],
+                ['hideIcons', 'Hide desktop icons', 'Hide files and shortcuts on the desktop.'],
+                ['minimizeWindows', 'Minimize other apps', 'Minimize apps you are not presenting.'],
+                ['hideTaskbar', 'Hide taskbar', 'Hide pinned and running apps.']
+              ] as const
+            ).map(([k, label, desc]) => (
+              <Row key={k} label={label} desc={desc}>
+                <Switch checked={settings.cleanDesktop[k]} onChange={(v) => void update({ cleanDesktop: { ...settings.cleanDesktop, [k]: v } })} />
+              </Row>
+            ))}
+          </Section>
+
+          <Section
+            id="privacy"
+            title="Browser privacy"
+            desc="Needs the Rekoto extension connected. Masks page password fields and crops tabs, address bar, and bookmarks. Chrome’s own password popups are browser UI — they are not masked; minimize them or use clean desktop."
+          >
+            <Row label="Mask sensitive fields" desc="Hide passwords, one-time codes and card numbers in the page while recording.">
+              <Switch checked={settings.maskPasswords} onChange={(v) => void update({ maskPasswords: v })} />
+            </Row>
+            <Row label="Hide browser toolbars" desc="Crop tabs, the address bar and the bookmarks bar so only the page is in the video.">
+              <Switch checked={settings.cropBrowserChrome} onChange={(v) => void update({ cropBrowserChrome: v })} />
+            </Row>
+            <ExtensionSetup />
+          </Section>
         </div>
-      </section>
-
-      <section className="panel">
-        <h3>Clean desktop</h3>
-        <p className="muted small">Applied during full-screen recordings when turned on. Your original wallpaper, icons and windows come back when you stop, even after a crash.</p>
-        <Toggle label="Use clean desktop by default" checked={settings.cleanDesktopEnabled} onChange={(v) => void update({ cleanDesktopEnabled: v })} />
-        {(
-          [
-            ['wallpaper', 'Swap wallpaper for the studio background'],
-            ['hideIcons', 'Hide desktop icons'],
-            ['minimizeWindows', 'Minimize other apps'],
-            ['hideTaskbar', 'Hide the taskbar']
-          ] as const
-        ).map(([k, label]) => (
-          <Toggle key={k} label={label} checked={settings.cleanDesktop[k]} onChange={(v) => void update({ cleanDesktop: { ...settings.cleanDesktop, [k]: v } })} />
-        ))}
-      </section>
-
-      <section className="panel">
-        <h3>Browser privacy</h3>
-        <Toggle
-          label="Mask password fields while recording"
-          hint="Typed passwords, one-time codes and card numbers are blanked out in Chrome, Edge and Firefox."
-          checked={settings.maskPasswords}
-          onChange={(v) => void update({ maskPasswords: v })}
-        />
-        <Toggle
-          label="Crop out bookmarks, tabs and address bar"
-          hint="When recording a browser window, only the web page is kept in the video."
-          checked={settings.cropBrowserChrome}
-          onChange={(v) => void update({ cropBrowserChrome: v })}
-        />
-        <ExtensionSetup />
-      </section>
+      </div>
     </div>
+  )
+}
+
+function Section({ id, title, desc, children }: { id: string; title: string; desc: string; children: ReactNode }) {
+  return (
+    <section id={`s-${id}`} className="card settings-section">
+      <header className="section-head">
+        <h2>{title}</h2>
+        <p>{desc}</p>
+      </header>
+      <div className="section-rows">{children}</div>
+    </section>
+  )
+}
+
+function Row({ label, desc, children }: { label: string; desc?: string; children: ReactNode }) {
+  return (
+    <div className="setting-row">
+      <div className="setting-text">
+        <span className="setting-label">{label}</span>
+        {desc && <span className="setting-desc">{desc}</span>}
+      </div>
+      <div className="setting-control">{children}</div>
+    </div>
+  )
+}
+
+function Switch({ checked, onChange }: { checked: boolean; onChange: (v: boolean) => void }) {
+  return (
+    <label className="switch-only">
+      <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} />
+      <span className="switch" aria-hidden="true" />
+    </label>
+  )
+}
+
+function ColorInput({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  return (
+    <span className="color-input">
+      <input type="color" value={value} onChange={(e) => onChange(e.target.value)} />
+      <code>{value.toUpperCase()}</code>
+    </span>
   )
 }
 
@@ -227,38 +311,63 @@ function ExtensionSetup() {
     }
   }, [])
   if (!info) return null
+  const connected = (b: string): boolean => info.connected.includes(b)
   return (
-    <div className="ext-setup">
-      <div className="row">
-        <span className={`status-dot ${info.hostRegistered ? 'ok' : 'bad'}`} />
-        <span>{info.hostRegistered ? 'Browser connection installed' : `Browser connection not installed${info.hostError ? `: ${info.hostError}` : ''}`}</span>
-        <button className="link" onClick={() => void window.api.invoke('ext:register').then(load)}>Reinstall</button>
+    <div className="ext-panel">
+      <div className="ext-status">
+        <span className={`status ${info.hostRegistered ? 'ok' : 'bad'}`}>
+          <Icon name={info.hostRegistered ? 'check' : 'alert'} size={14} />
+          {info.hostRegistered ? 'Browser connection installed' : 'Browser connection not installed'}
+        </span>
+        {info.hostError && <span className="muted small">{info.hostError}</span>}
+        <button className="btn btn-ghost btn-sm" onClick={() => void window.api.invoke('ext:register').then(load)}>
+          <Icon name="refresh" size={14} /> Reinstall
+        </button>
       </div>
-      <div className="row">
-        <span className="muted small">Connected now: {info.connected.length ? info.connected.join(', ') : 'none'}</span>
+      <div className="ext-grid">
+        <ExtCard
+          title="Chrome & Edge"
+          icon="chrome"
+          live={connected('chrome') || connected('edge')}
+          steps={[
+            <>Open <code>chrome://extensions</code> or <code>edge://extensions</code></>,
+            <>Turn on <b>Developer mode</b></>,
+            <>Click <b>Load unpacked</b> and select the folder</>
+          ]}
+          folder={info.chromeFolder}
+        />
+        <ExtCard
+          title="Firefox"
+          icon="globe"
+          live={connected('firefox')}
+          steps={[
+            <>Open <code>about:debugging#/runtime/this-firefox</code></>,
+            <>Click <b>Load Temporary Add-on</b></>,
+            <>Select <code>manifest.json</code> in the folder</>
+          ]}
+          folder={info.firefoxFolder}
+        />
       </div>
-      <div className="ext-cards">
-        <div className="ext-card">
-          <strong>Chrome / Edge</strong>
-          <ol className="small">
-            <li>Open <code>chrome://extensions</code> (or <code>edge://extensions</code>).</li>
-            <li>Turn on Developer mode.</li>
-            <li>Click Load unpacked and pick the folder below.</li>
-          </ol>
-          <button onClick={() => void window.api.invoke('shell:openPath', info.chromeFolder)}>Open extension folder</button>
-          <div className="muted small ellipsis">{info.chromeFolder}</div>
-        </div>
-        <div className="ext-card">
-          <strong>Firefox</strong>
-          <ol className="small">
-            <li>Open <code>about:debugging#/runtime/this-firefox</code>.</li>
-            <li>Click Load Temporary Add-on.</li>
-            <li>Pick <code>manifest.json</code> in the folder below.</li>
-          </ol>
-          <button onClick={() => void window.api.invoke('shell:openPath', info.firefoxFolder)}>Open extension folder</button>
-          <div className="muted small ellipsis">{info.firefoxFolder}</div>
-        </div>
+    </div>
+  )
+}
+
+function ExtCard({ title, icon, live, steps, folder }: { title: string; icon: string; live: boolean; steps: ReactNode[]; folder: string }) {
+  return (
+    <div className="ext-card">
+      <div className="ext-card-head">
+        <Icon name={icon} />
+        <strong>{title}</strong>
+        <span className={`chip ${live ? 'chip-ok' : ''}`}>{live ? 'Connected' : 'Not connected'}</span>
       </div>
+      <ol>
+        {steps.map((s, i) => (
+          <li key={i}>{s}</li>
+        ))}
+      </ol>
+      <button className="btn btn-secondary btn-sm" onClick={() => void window.api.invoke('shell:openPath', folder)}>
+        <Icon name="folder" size={14} /> Open extension folder
+      </button>
     </div>
   )
 }

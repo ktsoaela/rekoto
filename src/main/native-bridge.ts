@@ -10,10 +10,10 @@ import type { ViewportInfo } from '@shared/types'
  * relays newline-delimited JSON over this named pipe to the running app.
  */
 
-export const HOST_NAME = 'app.loomclone.host'
+export const HOST_NAME = 'app.Rekoto.host'
 export const CHROME_EXTENSION_ID = 'enopdbdfdabfjmnibejobebigmpkpglk'
-export const FIREFOX_EXTENSION_ID = 'recorder@loomclone.app'
-export const PIPE_PATH = '\\\\.\\pipe\\loom-clone-bridge'
+export const FIREFOX_EXTENSION_ID = 'recorder@Rekoto.app'
+export const PIPE_PATH = '\\\\.\\pipe\\Rekoto-bridge'
 
 export type BrowserName = 'chrome' | 'edge' | 'firefox'
 
@@ -135,7 +135,7 @@ export async function registerNativeHost(): Promise<void> {
       bat,
       ['@echo off', 'set ELECTRON_RUN_AS_NODE=1', `"${process.execPath}" "${hostScriptPath()}" %*`, ''].join('\r\n')
     )
-    const base = { name: HOST_NAME, description: 'Loom Clone recorder bridge', path: bat, type: 'stdio' }
+    const base = { name: HOST_NAME, description: 'Rekoto recorder bridge', path: bat, type: 'stdio' }
     const chromeManifest = path.join(dir, 'chrome-host.json')
     const firefoxManifest = path.join(dir, 'firefox-host.json')
     fs.writeFileSync(chromeManifest, JSON.stringify({ ...base, allowed_origins: [`chrome-extension://${CHROME_EXTENSION_ID}/`] }, null, 2))

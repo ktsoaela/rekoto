@@ -100,6 +100,7 @@ export async function runRecorder(): Promise<void> {
     document.body.appendChild(comp.canvas)
     const out = comp.canvas.captureStream(0)
     const videoTrack = out.getVideoTracks()[0] as CanvasCaptureMediaStreamTrack
+    comp.hold = true
     comp.start()
 
     const audioStreams = [screenStream, micStream].filter((s): s is MediaStream => !!s && s.getAudioTracks().length > 0)
@@ -138,7 +139,16 @@ export async function runRecorder(): Promise<void> {
       cleanup()
       await api.invoke('recorder:finished')
     }
-    rec.onstart = () => void api.invoke('recorder:started')
+    // Warm-up: the encoder starts during the countdown on a held brand frame, then pauses.
+    // "begin" only flips the hold and resumes, so recording starts the instant the countdown ends.
+    let begun = false
+    let encoderUp = false
+    rec.onstart = () => {
+      encoderUp = true
+      if (begun) comp.hold = false
+      else if (rec.state === 'recording') rec.pause()
+      void api.invoke('recorder:started')
+    }
     rec.onerror = (e) => void api.invoke('recorder:error', `MediaRecorder error: ${String((e as unknown as { error?: Error }).error ?? e)}`)
 
     // If the captured window closes or the user ends sharing, stop gracefully.
@@ -147,7 +157,14 @@ export async function runRecorder(): Promise<void> {
     })
 
     api.on('recorder:command', (cmd) => {
-      if (cmd === 'begin' && rec.state === 'inactive') rec.start(1000)
+      if (cmd === 'begin') {
+        begun = true
+        if (rec.state === 'inactive') rec.start(1000)
+        if (encoderUp) {
+          comp.hold = false
+          if (rec.state === 'paused') rec.resume()
+        }
+      }
       else if (cmd === 'pause' && rec.state === 'recording') rec.pause()
       else if (cmd === 'resume' && rec.state === 'paused') rec.resume()
       else if (cmd === 'stop' || cmd === 'cancel') {
@@ -159,6 +176,7 @@ export async function runRecorder(): Promise<void> {
       }
     })
 
+    rec.start(1000)
     await api.invoke('recorder:ready', rec.mimeType || mimeType)
   } catch (e) {
     for (const s of sources) s.stop()

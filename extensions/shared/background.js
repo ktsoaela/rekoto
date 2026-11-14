@@ -1,7 +1,7 @@
-// Background script for the Loom Clone extension (Chrome/Edge service worker, Firefox event page).
+// Background script for the Rekoto extension (Chrome/Edge service worker, Firefox event page).
 // Connects to the desktop app through native messaging.
 const api = globalThis.browser ?? globalThis.chrome
-const HOST = 'app.loomclone.host'
+const HOST = 'app.Rekoto.host'
 const BROWSER = navigator.userAgent.includes('Firefox') ? 'firefox' : navigator.userAgent.includes('Edg/') ? 'edge' : 'chrome'
 
 let port = null
@@ -60,8 +60,14 @@ function applyState(s) {
   api.storage.local.set({ lcMask: !!state.mask })
   api.action.setBadgeText({ text: state.recording ? (state.paused ? '❚❚' : 'REC') : '' })
   api.action.setBadgeBackgroundColor({ color: state.paused ? '#f59e0b' : '#f43f5e' })
-  const tracking = state.recording && (!state.trackBrowser || state.trackBrowser === BROWSER) && (state.trackTitle || trackWindowId != null)
-  if (tracking && !viewportTimer) viewportTimer = setInterval(reportViewport, 700)
+  const tracking =
+    state.recording &&
+    (!state.trackBrowser || state.trackBrowser === BROWSER) &&
+    (state.trackTitle || trackWindowId != null)
+  if (tracking && !viewportTimer) {
+    viewportTimer = setInterval(reportViewport, 400)
+    void reportViewport()
+  }
   if (!tracking && viewportTimer) {
     clearInterval(viewportTimer)
     viewportTimer = null
@@ -69,10 +75,30 @@ function applyState(s) {
   if (wasRecording && !state.recording) trackWindowId = null
 }
 
+function stripBrowserSuffix(title) {
+  return String(title || '')
+    .replace(/\s*[-–—]\s*(Google Chrome|Mozilla Firefox|Microsoft\s*Edge)\s*$/i, '')
+    .trim()
+}
+
+function titlesMatch(trackTitle, tabTitle) {
+  const a = String(trackTitle || '').toLowerCase()
+  const b = String(tabTitle || '').toLowerCase()
+  const aCore = stripBrowserSuffix(trackTitle).toLowerCase()
+  if (!a || !b) return false
+  return a.includes(b) || b.includes(a) || aCore.includes(b) || b.includes(aCore)
+}
+
 async function findTrackedTab() {
   const tabs = await api.tabs.query({ active: true })
   if (trackWindowId != null) return tabs.find((t) => t.windowId === trackWindowId) || null
-  if (state.trackTitle) return tabs.find((t) => t.title && state.trackTitle.includes(t.title)) || null
+  if (state.trackTitle) {
+    const hit = tabs.find((t) => t.title && titlesMatch(state.trackTitle, t.title))
+    if (hit) return hit
+    // Fallback: any open tab whose title matches (active tab may be a different window).
+    const all = await api.tabs.query({})
+    return all.find((t) => t.title && titlesMatch(state.trackTitle, t.title)) || null
+  }
   return null
 }
 
@@ -91,7 +117,8 @@ async function measure(tab) {
   } catch (_) {
     /* restricted page (new tab, settings, store) - fall back to window bounds */
   }
-  const ui = lastUi.get(tab.windowId) || { dx: 16, dy: BROWSER === 'firefox' ? 110 : 120 }
+  // Chrome with bookmarks bar is taller than a bare toolbar; prefer a safe overestimate when measuring fails.
+  const ui = lastUi.get(tab.windowId) || { dx: 16, dy: BROWSER === 'firefox' ? 110 : 148 }
   return {
     screenX: win.left,
     screenY: win.top,

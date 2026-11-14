@@ -1,25 +1,33 @@
 import { app } from 'electron'
-import { execFile } from 'child_process'
+import { execFile, execFileSync, spawn, type ChildProcessWithoutNullStreams } from 'child_process'
 import fs from 'fs'
 import path from 'path'
 import type { CleanDesktopConfig } from '@shared/types'
 
 /**
  * Clean desktop mode (Windows): swap the wallpaper, hide desktop icons and the taskbar, and
- * minimize other windows while recording. The previous state is written to disk before anything
- * changes so it can be restored after a crash on the next launch.
+ * minimize other windows while recording.
+ *
+ * Speed: a single PowerShell process is started when the app launches and keeps the Win32 helper
+ * type compiled, so apply/restore take tens of milliseconds instead of seconds.
+ *
+ * Safety: the user's wallpaper FILE is copied to a backup before anything changes. Windows
+ * overwrites its own "TranscodedWallpaper" copy when a new wallpaper is set, so restoring from the
+ * registry path alone would bring back our studio wallpaper instead of the user's.
  */
 
 export interface CleanState {
-  wallpaper: { path: string; style: string; tile: string } | null
+  wallpaper: { path: string; style: string; tile: string; source?: string } | null
   iconsHidden: boolean
   taskbarHidden: boolean
   minimized: number[]
 }
 
-const PS_SCRIPT = String.raw`
-param([string]$Action, [string]$ArgsFile)
+const PS_HEADER = String.raw`
 $ErrorActionPreference = 'Stop'
+[Console]::InputEncoding = New-Object System.Text.UTF8Encoding $false
+[Console]::OutputEncoding = New-Object System.Text.UTF8Encoding $false
+if (-not ('LcDesk' -as [type])) {
 Add-Type -TypeDefinition @'
 using System;
 using System.Collections.Generic;
@@ -100,13 +108,51 @@ public static class LcDesk {
   }
 }
 '@
-$a = Get-Content -Raw -LiteralPath $ArgsFile | ConvertFrom-Json
+}
 $desk = 'HKCU:\Control Panel\Desktop'
-if ($Action -eq 'apply') {
+
+function Save-State([object]$state, [string]$StateFile) {
+  if ($StateFile) {
+    # No BOM: the app parses this file with JSON.parse.
+    [IO.File]::WriteAllText($StateFile, ($state | ConvertTo-Json -Compress -Depth 5), (New-Object System.Text.UTF8Encoding $false))
+  }
+}
+
+function Test-Ours([string]$p) { return ($p -and ($p -like '*studio-wallpaper*')) }
+
+function Invoke-Apply($a, [string]$StateFile, [string]$BackupDir) {
   $state = [ordered]@{ wallpaper = $null; iconsHidden = $false; taskbarHidden = $false; minimized = @() }
   if ($a.wallpaper) {
     $p = Get-ItemProperty -Path $desk
-    $state.wallpaper = [ordered]@{ path = [string]$p.WallPaper; style = [string]$p.WallpaperStyle; tile = [string]$p.TileWallpaper }
+    $cur = [string]$p.WallPaper
+    $meta = Join-Path $BackupDir 'original-wallpaper.json'
+    if (Test-Ours $cur) {
+      # A previous restore did not finish: our wallpaper is still set. Use the saved original.
+      if (Test-Path -LiteralPath $meta) {
+        $m = [IO.File]::ReadAllText($meta) | ConvertFrom-Json
+        $state.wallpaper = [ordered]@{ path = [string]$m.path; style = [string]$m.style; tile = [string]$m.tile; source = [string]$m.source }
+      } else {
+        $state.wallpaper = [ordered]@{ path = ''; style = '10'; tile = '0'; source = '' }
+      }
+    } else {
+      $backup = ''
+      if ($cur -and (Test-Path -LiteralPath $cur)) {
+        $ext = [IO.Path]::GetExtension($cur)
+        if (-not $ext) { $ext = '.jpg' }
+        Get-ChildItem -LiteralPath $BackupDir -Filter 'original-wallpaper.*' -ErrorAction SilentlyContinue | Where-Object { $_.Extension -ne '.json' } | Remove-Item -Force -ErrorAction SilentlyContinue
+        $backup = Join-Path $BackupDir ('original-wallpaper' + $ext)
+        Copy-Item -LiteralPath $cur -Destination $backup -Force
+      }
+      $state.wallpaper = [ordered]@{ path = $backup; style = [string]$p.WallpaperStyle; tile = [string]$p.TileWallpaper; source = $cur }
+      [IO.File]::WriteAllText($meta, ($state.wallpaper | ConvertTo-Json -Compress), (New-Object System.Text.UTF8Encoding $false))
+    }
+  }
+  if ($a.hideIcons) { $state.iconsHidden = $true }
+  if ($a.hideTaskbar) { $state.taskbarHidden = $true }
+  # Snapshot BEFORE changing anything so a crash mid-apply still restores the user's desktop.
+  Save-State $state $StateFile
+
+  if ($a.wallpaper) {
     Set-ItemProperty -Path $desk -Name WallpaperStyle -Value '10'
     Set-ItemProperty -Path $desk -Name TileWallpaper -Value '0'
     [void][LcDesk]::SetWallpaper([string]$a.wallpaper)
@@ -118,33 +164,185 @@ if ($Action -eq 'apply') {
     $hw = [long[]]@($a.keepHwnds | ForEach-Object { [long]$_ })
     $state.minimized = @([LcDesk]::MinimizeOthers($pids, $hw))
   }
-  $state | ConvertTo-Json -Compress -Depth 4
-} elseif ($Action -eq 'restore') {
+  Save-State $state $StateFile
+  return $state
+}
+
+function Invoke-Restore($a) {
   if ($a.wallpaper) {
-    Set-ItemProperty -Path $desk -Name WallpaperStyle -Value ([string]$a.wallpaper.style)
-    Set-ItemProperty -Path $desk -Name TileWallpaper -Value ([string]$a.wallpaper.tile)
-    [void][LcDesk]::SetWallpaper([string]$a.wallpaper.path)
+    $target = [string]$a.wallpaper.path
+    $src = [string]$a.wallpaper.source
+    # Prefer the user's real file when it still exists (keeps Settings > Personalization accurate).
+    if ($src -and ($src -notlike '*TranscodedWallpaper*') -and -not (Test-Ours $src) -and (Test-Path -LiteralPath $src)) { $target = $src }
+    if ($target -and -not (Test-Path -LiteralPath $target)) { $target = '' }
+    $style = [string]$a.wallpaper.style; if (-not $style) { $style = '10' }
+    $tile = [string]$a.wallpaper.tile; if (-not $tile) { $tile = '0' }
+    Set-ItemProperty -Path $desk -Name WallpaperStyle -Value $style
+    Set-ItemProperty -Path $desk -Name TileWallpaper -Value $tile
+    # Empty path = the user had a solid colour background.
+    [void][LcDesk]::SetWallpaper($target)
   }
   if ($a.iconsHidden) { [void][LcDesk]::SetIcons($true) }
   if ($a.taskbarHidden) { [void][LcDesk]::SetTaskbar($true) }
   if ($a.minimized) { [LcDesk]::Restore([long[]]@($a.minimized | ForEach-Object { [long]$_ })) }
-  '{"ok":true}'
+  return @{ ok = $true }
+}
+`
+
+const ONE_SHOT_SCRIPT = String.raw`
+param([string]$Action, [string]$ArgsFile, [string]$StateFile, [string]$BackupDir)
+` + PS_HEADER + String.raw`
+$a = [IO.File]::ReadAllText($ArgsFile) | ConvertFrom-Json
+if ($Action -eq 'apply') { Invoke-Apply $a $StateFile $BackupDir | ConvertTo-Json -Compress -Depth 5 }
+elseif ($Action -eq 'restore') { Invoke-Restore $a | Out-Null; '{"ok":true}' }
+`
+
+const SERVER_SCRIPT = PS_HEADER + String.raw`
+[Console]::Out.WriteLine('{"ready":true}')
+[Console]::Out.Flush()
+while ($true) {
+  $line = [Console]::In.ReadLine()
+  if ($null -eq $line) { break }
+  if (-not $line.Trim()) { continue }
+  $id = $null
+  try {
+    $req = $line | ConvertFrom-Json
+    $id = $req.id
+    if ($req.action -eq 'apply') { $res = Invoke-Apply $req.args ([string]$req.stateFile) ([string]$req.backupDir) }
+    elseif ($req.action -eq 'restore') { $res = Invoke-Restore $req.args }
+    else { $res = @{ pong = $true } }
+    $o = [ordered]@{ id = $id; ok = $true; result = $res }
+  } catch {
+    $o = [ordered]@{ id = $id; ok = $false; error = $_.Exception.Message }
+  }
+  [Console]::Out.WriteLine(($o | ConvertTo-Json -Compress -Depth 6))
+  [Console]::Out.Flush()
 }
 `
 
 const dir = (): string => path.join(app.getPath('userData'), 'clean-desktop')
 const stateFile = (): string => path.join(dir(), 'restore-state.json')
 
-function runPs(action: 'apply' | 'restore', args: unknown): Promise<string> {
+function writeScript(name: string, body: string): string {
   fs.mkdirSync(dir(), { recursive: true })
-  const script = path.join(dir(), 'desk.ps1')
-  fs.writeFileSync(script, PS_SCRIPT, 'utf8')
+  const p = path.join(dir(), name)
+  try {
+    if (fs.readFileSync(p, 'utf8') === body) return p
+  } catch {
+    /* write below */
+  }
+  fs.writeFileSync(p, body, 'utf8')
+  return p
+}
+
+/** Non-ASCII safe JSON for PowerShell stdin. */
+function asciiJson(v: unknown): string {
+  return JSON.stringify(v).replace(/[\u007f-￿]/g, (c) => '\\u' + c.charCodeAt(0).toString(16).padStart(4, '0'))
+}
+
+// ---------- persistent PowerShell helper ----------
+
+let server: ChildProcessWithoutNullStreams | null = null
+let serverReady: Promise<boolean> | null = null
+let nextId = 1
+const waiting = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void }>()
+
+/** Starts the helper in the background. Call once at app launch so the first recording is fast. */
+export function warmCleanDesktop(): void {
+  if (!isSupported() || server) return
+  const script = writeScript('desk-server.ps1', SERVER_SCRIPT)
+  const proc = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', script], {
+    windowsHide: true
+  })
+  server = proc
+  let buf = ''
+  serverReady = new Promise<boolean>((resolveReady) => {
+    const timer = setTimeout(() => resolveReady(false), 20_000)
+    proc.stdout.setEncoding('utf8')
+    proc.stdout.on('data', (chunk: string) => {
+      buf += chunk
+      let i: number
+      while ((i = buf.indexOf('\n')) >= 0) {
+        const line = buf.slice(0, i).trim()
+        buf = buf.slice(i + 1)
+        if (!line.startsWith('{')) continue
+        try {
+          const msg = JSON.parse(line) as { ready?: boolean; id?: number; ok?: boolean; result?: unknown; error?: string }
+          if (msg.ready) {
+            clearTimeout(timer)
+            resolveReady(true)
+            continue
+          }
+          const w = msg.id != null ? waiting.get(msg.id) : undefined
+          if (!w) continue
+          waiting.delete(msg.id!)
+          if (msg.ok) w.resolve(msg.result)
+          else w.reject(new Error(msg.error || 'clean desktop helper failed'))
+        } catch {
+          /* ignore partial/foreign output */
+        }
+      }
+    })
+    proc.on('exit', () => {
+      clearTimeout(timer)
+      resolveReady(false)
+    })
+  })
+  proc.stderr.on('data', () => undefined)
+  proc.on('exit', () => {
+    for (const w of waiting.values()) w.reject(new Error('clean desktop helper exited'))
+    waiting.clear()
+    if (server === proc) {
+      server = null
+      serverReady = null
+    }
+  })
+}
+
+export function stopCleanDesktopHelper(): void {
+  try {
+    server?.stdin.end()
+    server?.kill()
+  } catch {
+    /* already gone */
+  }
+  server = null
+  serverReady = null
+}
+
+async function viaServer(action: 'apply' | 'restore', args: unknown, extra: Record<string, string>): Promise<unknown | undefined> {
+  if (!server) warmCleanDesktop()
+  const ready = serverReady ? await serverReady : false
+  const proc = server
+  if (!ready || !proc) return undefined
+  const id = nextId++
+  return new Promise((resolve, reject) => {
+    const t = setTimeout(() => {
+      waiting.delete(id)
+      reject(new Error('clean desktop helper timed out'))
+    }, 15_000)
+    waiting.set(id, {
+      resolve: (v) => {
+        clearTimeout(t)
+        resolve(v)
+      },
+      reject: (e) => {
+        clearTimeout(t)
+        reject(e)
+      }
+    })
+    proc.stdin.write(asciiJson({ id, action, args, ...extra }) + '\n')
+  })
+}
+
+function viaOneShot(action: 'apply' | 'restore', args: unknown): Promise<string> {
+  const script = writeScript('desk.ps1', ONE_SHOT_SCRIPT)
   const argsFile = path.join(dir(), `${action}-args.json`)
   fs.writeFileSync(argsFile, JSON.stringify(args), 'utf8')
   return new Promise((resolve, reject) => {
     execFile(
       'powershell.exe',
-      ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', script, '-Action', action, '-ArgsFile', argsFile],
+      ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', script, '-Action', action, '-ArgsFile', argsFile, '-StateFile', stateFile(), '-BackupDir', dir()],
       { windowsHide: true, timeout: 30_000 },
       (err, stdout, stderr) => {
         if (err) reject(new Error(stderr || err.message))
@@ -154,45 +352,103 @@ function runPs(action: 'apply' | 'restore', args: unknown): Promise<string> {
   })
 }
 
+async function run(action: 'apply' | 'restore', args: unknown): Promise<unknown> {
+  const extra = { stateFile: stateFile(), backupDir: dir() }
+  try {
+    const r = await viaServer(action, args, extra)
+    if (r !== undefined) return r
+  } catch (e) {
+    console.error('clean desktop helper failed, falling back', e)
+  }
+  const out = await viaOneShot(action, args)
+  return JSON.parse(out.split(/\r?\n/).filter(Boolean).pop() || '{}')
+}
+
+// ---------- state ----------
+
+function normalizeState(raw: CleanState): CleanState {
+  const minimized = Array.isArray(raw.minimized) ? raw.minimized : raw.minimized ? [raw.minimized as unknown as number] : []
+  return {
+    wallpaper: raw.wallpaper ?? null,
+    iconsHidden: !!raw.iconsHidden,
+    taskbarHidden: !!raw.taskbarHidden,
+    minimized
+  }
+}
+
+function readStateFile(): CleanState | null {
+  try {
+    return normalizeState(JSON.parse(fs.readFileSync(stateFile(), 'utf8').replace(/^﻿/, '')) as CleanState)
+  } catch {
+    return null
+  }
+}
+
+/** Old state files (before backups existed) may lack a usable path; recover from Windows history. */
+function repairMissingWallpaper(state: CleanState): CleanState {
+  if (!state.wallpaper || state.wallpaper.path || state.wallpaper.source !== undefined) return state
+  try {
+    const prev = execFileSync(
+      'powershell.exe',
+      [
+        '-NoProfile',
+        '-NonInteractive',
+        '-Command',
+        [
+          "$hist = Get-ItemProperty 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Wallpapers' -ErrorAction SilentlyContinue",
+          'if ($hist) {',
+          "  foreach ($k in 'BackgroundHistoryPath0','BackgroundHistoryPath1','BackgroundHistoryPath2','BackgroundHistoryPath3') {",
+          '    $p = [string]$hist.$k',
+          "    if ($p -and $p -notlike '*studio-wallpaper*' -and (Test-Path -LiteralPath $p)) { Write-Output $p; break }",
+          '  }',
+          '}'
+        ].join('; ')
+      ],
+      { encoding: 'utf8', windowsHide: true, timeout: 10_000 }
+    ).trim()
+    return prev ? { ...state, wallpaper: { path: prev, style: state.wallpaper.style || '10', tile: state.wallpaper.tile || '0' } } : state
+  } catch {
+    return state
+  }
+}
+
 export function isSupported(): boolean {
   return process.platform === 'win32'
 }
 
-export async function applyCleanDesktop(
-  cfg: CleanDesktopConfig,
-  wallpaperPath: string | null,
-  keepHwnds: number[]
-): Promise<CleanState | null> {
+export async function applyCleanDesktop(cfg: CleanDesktopConfig, wallpaperPath: string | null, keepHwnds: number[]): Promise<CleanState | null> {
   if (!isSupported()) return null
-  // Mark that a change is in progress so a crash mid-apply still triggers a restore attempt.
   fs.mkdirSync(dir(), { recursive: true })
-  fs.writeFileSync(stateFile(), JSON.stringify({ wallpaper: null, iconsHidden: cfg.hideIcons, taskbarHidden: cfg.hideTaskbar, minimized: [] }))
-  const out = await runPs('apply', {
-    wallpaper: cfg.wallpaper && wallpaperPath && fs.existsSync(wallpaperPath) ? wallpaperPath : null,
-    hideIcons: cfg.hideIcons,
-    hideTaskbar: cfg.hideTaskbar,
-    minimize: cfg.minimizeWindows,
-    keepPids: [process.pid],
-    keepHwnds
-  })
-  const state = JSON.parse(out.split(/\r?\n/).pop() || '{}') as CleanState
-  state.minimized = Array.isArray(state.minimized) ? state.minimized : state.minimized ? [state.minimized as unknown as number] : []
-  fs.writeFileSync(stateFile(), JSON.stringify(state))
-  return state
+  try {
+    const raw = await run('apply', {
+      wallpaper: cfg.wallpaper && wallpaperPath && fs.existsSync(wallpaperPath) ? wallpaperPath : null,
+      hideIcons: cfg.hideIcons,
+      hideTaskbar: cfg.hideTaskbar,
+      minimize: cfg.minimizeWindows,
+      keepPids: [process.pid],
+      keepHwnds
+    })
+    const state = normalizeState(raw as CleanState)
+    fs.writeFileSync(stateFile(), JSON.stringify(state))
+    return state
+  } catch (e) {
+    // Apply may have partially changed the desktop; restore from whatever was snapshotted.
+    try {
+      await restoreCleanDesktop()
+    } catch (restoreErr) {
+      console.error('clean desktop rollback failed', restoreErr)
+    }
+    throw e
+  }
 }
 
 export async function restoreCleanDesktop(state?: CleanState | null): Promise<void> {
   if (!isSupported()) return
-  let s = state ?? null
-  if (!s) {
-    try {
-      s = JSON.parse(fs.readFileSync(stateFile(), 'utf8'))
-    } catch {
-      return
-    }
-  }
+  let s = state ? normalizeState(state) : readStateFile()
+  if (!s) return
+  s = repairMissingWallpaper(s)
   try {
-    await runPs('restore', s)
+    await run('restore', s)
   } finally {
     fs.rmSync(stateFile(), { force: true })
   }

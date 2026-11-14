@@ -25,6 +25,8 @@ export class Compositor {
   private ctx: CanvasRenderingContext2D
   private timer: number | null = null
   layout: Layout
+  /** While true only the brand background is drawn (encoder warm-up before the countdown ends). */
+  hold = false
 
   constructor(private o: CompositorOptions) {
     this.canvas = document.createElement('canvas')
@@ -58,6 +60,10 @@ export class Compositor {
     const H = this.canvas.height
     const { screen, camera, mode, studio } = this.o
 
+    if (this.hold) {
+      ctx.drawImage(this.o.background, 0, 0, W, H)
+      return
+    }
     if (mode === 'camera' || studio || !screen) ctx.drawImage(this.o.background, 0, 0, W, H)
     else {
       ctx.fillStyle = '#000'

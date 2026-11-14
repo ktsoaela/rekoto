@@ -1,0 +1,31 @@
+---
+description: Rekoto product rules — skills, performance, privacy, UI
+alwaysApply: true
+---
+
+# Rekoto
+
+Use Superpowers, UI UX Pro Max, Marketing skills, and No AI slop.
+
+## Product
+
+- Brand name is **Rekoto** (Sesotho-leaning “record”; never Loom / Capora / loom_clone in UI).
+- Local-only recorder. No cloud claims.
+- Windows desktop + Chrome/Edge/Firefox companion extensions.
+
+## Recording UX
+
+- Feedback within ~300ms of Start (Preparing or countdown).
+- Countdown digits sync after overlay is visible.
+- On stop, keep UI visible (“Saving…”) while restore + encode run.
+
+## Browser privacy
+
+- Mask + crop need the extension connected.
+- Broadcast tracking during preparing.
+- Chrome’s own password UI is not maskable — say so honestly in Settings.
+
+## UI
+
+- SaaS shell: sidebar brand + product nav + sticky top bar + workspace chip.
+- Follow `design-system/rekoto/MASTER.md`. Plus Jakarta Sans. No Inter.

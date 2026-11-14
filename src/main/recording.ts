@@ -4,7 +4,13 @@ import fs from 'fs'
 import path from 'path'
 import type { CameraLayout, Layout, RecState, Rect, StartOptions, ViewportInfo } from '@shared/types'
 import { getSettings, updateSettings } from './settings'
-import { applyCleanDesktop, restoreCleanDesktop, wallpaperFile, type CleanState } from './clean-desktop'
+import {
+  applyCleanDesktop,
+  hasPendingRestore,
+  restoreCleanDesktop,
+  wallpaperFile,
+  type CleanState
+} from './clean-desktop'
 import { toMp4 } from './ffmpeg'
 import { broadcastState, type BrowserName } from './native-bridge'
 import { createRouteWindow, hideFromCapture } from './windows'
@@ -25,6 +31,8 @@ interface Session {
   layout: Layout
   track: Track | null
   clean: CleanState | null
+  /** Clean-desktop apply in flight; teardown awaits it so a fast cancel still restores the desktop. */
+  cleanP: Promise<CleanState | null>
   recorder: BrowserWindow | null
   bubble: BrowserWindow | null
   controls: BrowserWindow | null
@@ -74,11 +82,28 @@ function fileStamp(): string {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} at ${p(d.getHours())}.${p(d.getMinutes())}.${p(d.getSeconds())}`
 }
 
+function stripBrowserSuffix(title: string): string {
+  return title.replace(/\s*[-–—]\s*(Google Chrome|Mozilla Firefox|Microsoft\s*Edge)\s*$/i, '').trim()
+}
+
+function titlesMatch(trackTitle: string, tabTitle: string): boolean {
+  const a = trackTitle.toLowerCase()
+  const b = tabTitle.toLowerCase()
+  const aCore = stripBrowserSuffix(trackTitle).toLowerCase()
+  if (!a || !b) return false
+  return a.includes(b) || b.includes(a) || aCore.includes(b) || b.includes(aCore)
+}
+
 export class RecordingManager {
   state: RecState = { status: 'idle', startedAt: null, pausedMs: 0, pausedAt: null, error: null, lastSaved: null }
   private s: Session | null = null
   /** Source the next getDisplayMedia call should resolve to. */
   pendingSource: { id: string; audio: boolean } | null = null
+  /** Pre-loaded windows so Start feels instant (no window creation or bundle load on click). */
+  private standbyRecorder: BrowserWindow | null = null
+  private countdownWin: BrowserWindow | null = null
+  private controlsWin: BrowserWindow | null = null
+  private configWaiters = new Map<number, (cfg: unknown) => void>()
 
   constructor(
     private getMainWindow: () => BrowserWindow | null,
@@ -95,20 +120,27 @@ export class RecordingManager {
     this.state = { ...this.state, ...patch }
     for (const w of BrowserWindow.getAllWindows()) if (!w.isDestroyed()) w.webContents.send('rec:state', this.state)
     const settings = getSettings()
-    const rec = this.state.status === 'recording' || this.state.status === 'paused' || this.state.status === 'countdown'
+    // Include preparing so the extension starts viewport crop + password mask before the first frame.
+    const live =
+      this.state.status === 'preparing' ||
+      this.state.status === 'countdown' ||
+      this.state.status === 'recording' ||
+      this.state.status === 'paused'
     broadcastState({
-      recording: rec,
+      recording: live,
       paused: this.state.status === 'paused',
-      mask: settings.maskPasswords && (rec || this.state.status === 'preparing'),
+      mask: settings.maskPasswords && live,
       trackTitle: this.s?.track?.title ?? null,
       trackBrowser: this.s?.track?.browser ?? null
     })
   }
 
   private registerIpc(): void {
-    ipcMain.handle('recorder:config', () => {
-      if (!this.s) throw new Error('No active recording')
-      return { options: this.s.options, settings: getSettings(), layout: this.s.layout }
+    ipcMain.handle('recorder:config', (e) => {
+      const s = this.s
+      if (s?.recorder && !s.recorder.isDestroyed() && e.sender === s.recorder.webContents) return this.configFor(s)
+      // A standby recorder asks early; answer when a recording arms it.
+      return new Promise((resolve) => this.configWaiters.set(e.sender.id, resolve))
     })
     ipcMain.handle('recorder:ready', (_e, mime: string) => this.s?.ready.resolve(mime))
     ipcMain.handle('recorder:started', () => this.s?.started.resolve())
@@ -143,6 +175,10 @@ export class RecordingManager {
     if (action === 'cancel') return this.stop(true)
   }
 
+  private configFor(s: Session): unknown {
+    return { options: s.options, settings: getSettings(), layout: s.layout }
+  }
+
   async start(options: StartOptions, from?: { browser: BrowserName; title: string; info: ViewportInfo | null }): Promise<void> {
     if (this.active) throw new Error('A recording is already in progress')
     const settings = getSettings()
@@ -153,12 +189,16 @@ export class RecordingManager {
     fs.mkdirSync(tmpDir, { recursive: true })
     const tmpPath = path.join(tmpDir, `rec-${Date.now()}.webm`)
 
+    // Resolve the display without enumerating sources (that alone can cost a second or more).
     let display = screen.getDisplayNearestPoint(screen.getCursorScreenPoint())
-    if (options.mode === 'screen' && options.sourceId) {
-      const src = (await desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width: 1, height: 1 } })).find(
-        (x) => x.id === options.sourceId
-      )
-      display = screen.getAllDisplays().find((d) => String(d.id) === src?.display_id) ?? display
+    const byId = (id?: string): Display | undefined => (id ? screen.getAllDisplays().find((d) => String(d.id) === id) : undefined)
+    if (options.mode === 'screen') {
+      const d = byId(options.displayId)
+      if (d) display = d
+      else if (options.sourceId) {
+        const src = (await desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width: 1, height: 1 } })).find((x) => x.id === options.sourceId)
+        display = byId(src?.display_id) ?? display
+      }
     }
 
     let track: Track | null = null
@@ -175,6 +215,7 @@ export class RecordingManager {
       layout: { crop: null, camera: null },
       track,
       clean: null,
+      cleanP: Promise.resolve(null),
       recorder: null,
       bubble: null,
       controls: null,
@@ -190,49 +231,80 @@ export class RecordingManager {
     try {
       this.getMainWindow()?.hide()
 
+      // 1) Feedback first: the countdown is on screen within a frame or two of the click.
+      s.countdown = this.showCountdown(display)
+      const countdownDone = settings.countdown ? this.runCountdown(s) : Promise.resolve()
+      if (settings.countdown) this.setState({ status: 'countdown' })
+      else this.sendPhase(s, { phase: 'prep', n: 0 })
+
+      // 2) Everything else runs in parallel with the countdown.
       if (options.cleanDesktop) {
         const keep = options.keepWindowIds.map(hwndOf).filter((n): n is number => n != null)
         if (options.mode === 'window' && options.sourceId) {
           const h = hwndOf(options.sourceId)
           if (h) keep.push(h)
         }
-        try {
-          s.clean = await applyCleanDesktop(settings.cleanDesktop, wallpaperFile(), keep)
-        } catch (e) {
+        s.cleanP = applyCleanDesktop(settings.cleanDesktop, wallpaperFile(), keep).catch((e) => {
           console.error('clean desktop failed', e)
-        }
+          return null
+        })
       }
 
       if (options.camera) s.bubble = this.createBubble(display, options.mode === 'camera')
       s.layout.camera = options.camera && options.mode !== 'camera' && s.bubble ? this.cameraFromBubble(s.bubble) : null
 
       this.pendingSource = options.sourceId ? { id: options.sourceId, audio: options.systemAudio } : null
-      s.recorder = this.createRecorderWindow(display)
+      s.recorder = this.takeRecorder()
       s.recorder.on('closed', () => {
         if (this.s === s) s.recorder = null
       })
-      s.mime = await withTimeout(s.ready.promise, 25_000, 'Recorder did not start (camera, microphone or screen unavailable)')
+      this.arm(s)
 
-      if (settings.countdown) {
-        this.setState({ status: 'countdown' })
-        s.countdown = this.createCountdown(display)
-        await wait(3000)
-      }
+      const prepared = Promise.all([
+        withTimeout(s.ready.promise, 20_000, 'Recorder did not start (camera, microphone or screen unavailable)'),
+        s.cleanP
+      ])
+
+      await countdownDone
       if (this.s !== s) return
+      // Only if setup is slower than the countdown: show a short "Starting" state instead of a frozen "1".
+      let done = false
+      void prepared.then(() => (done = true), () => (done = true))
+      await Promise.resolve()
+      if (!done) this.sendPhase(s, { phase: 'prep', n: 0 })
 
-      // The encoder needs a moment to spin up; keep the countdown on screen until it really records,
-      // so the first words after "1" are not cut off.
+      const [mime, clean] = await prepared
+      if (this.s !== s) return
+      s.mime = mime
+      s.clean = clean
+
+      // 3) Go. The encoder already warmed up during the countdown, so this is instant.
       s.recorder?.webContents.send('recorder:command', 'begin')
-      await withTimeout(s.started.promise, 8000, 'The video encoder did not start').catch((e) => console.error(e))
-      if (this.s !== s) return
-      s.countdown?.close()
-      s.countdown = null
-      s.controls = this.createControls(display)
+      this.hideCountdown(s)
+      s.controls = this.showControls(display)
       this.registerShortcuts()
       this.setState({ status: 'recording', startedAt: Date.now(), pausedMs: 0, pausedAt: null })
     } catch (e) {
       await this.fail(e as Error)
       throw e
+    }
+  }
+
+  private sendPhase(s: Session, p: { phase: 'prep' | 'count' | 'idle'; n: number }): void {
+    const w = s.countdown
+    if (w && !w.isDestroyed()) w.webContents.send('countdown:phase', p)
+  }
+
+  /** 3-2-1 on wall-clock seconds, starting immediately. */
+  private async runCountdown(s: Session): Promise<void> {
+    const w = s.countdown
+    if (w && !w.isDestroyed() && w.webContents.isLoading()) {
+      await Promise.race([new Promise<void>((r) => w.webContents.once('did-finish-load', () => r())), wait(1500)])
+    }
+    for (let n = 3; n >= 1; n--) {
+      if (this.s !== s) return
+      this.sendPhase(s, { phase: 'count', n })
+      await wait(1000)
     }
   }
 
@@ -266,13 +338,17 @@ export class RecordingManager {
       console.error(e)
     }
     await new Promise<void>((r) => s.out.end(() => r()))
-    await this.teardown(s)
+
+    // Bring Rekoto back immediately with a Saving state; restore + encode run in parallel.
+    this.showMain()
+    const restoreP = this.restoreOnly(s)
+    this.destroyOverlays(s)
 
     if (cancel) {
+      await restoreP
       fs.rmSync(s.tmpPath, { force: true })
       this.s = null
       this.setState({ status: 'idle', startedAt: null })
-      this.showMain()
       return
     }
 
@@ -281,16 +357,20 @@ export class RecordingManager {
     try {
       const settings = getSettings()
       fs.mkdirSync(settings.saveFolder, { recursive: true })
-      let target = path.join(settings.saveFolder, `Recording ${fileStamp()}.mp4`)
-      for (let i = 2; fs.existsSync(target); i++) target = path.join(settings.saveFolder, `Recording ${fileStamp()} (${i}).mp4`)
-      saved = await toMp4(s.tmpPath, target, /h264|avc1/i.test(s.mime), settings.fps)
+      const title = (s.options.title ?? '').replace(/[<>:"/\\|?*\x00-\x1f]/g, '').replace(/\s+/g, ' ').trim().slice(0, 120)
+      const base = title || `Recording ${fileStamp()}`
+      let target = path.join(settings.saveFolder, `${base}.mp4`)
+      for (let i = 2; fs.existsSync(target); i++) target = path.join(settings.saveFolder, `${base} (${i}).mp4`)
+      const encodeP = toMp4(s.tmpPath, target, /h264|avc1/i.test(s.mime), settings.fps)
+      const [out] = await Promise.all([encodeP, restoreP])
+      saved = out
       fs.rmSync(s.tmpPath, { force: true })
     } catch (e) {
+      await restoreP
       error = `Could not save the video: ${(e as Error).message}. The raw recording is kept at ${s.tmpPath}`
     }
     this.s = null
     this.setState({ status: 'idle', startedAt: null, lastSaved: saved, error })
-    this.showMain()
     if (saved) this.onSaved(saved)
   }
 
@@ -307,11 +387,20 @@ export class RecordingManager {
     this.showMain()
   }
 
-  private async teardown(s: Session): Promise<void> {
-    for (const w of [s.countdown, s.controls, s.bubble, s.recorder]) if (w && !w.isDestroyed()) w.destroy()
+  private destroyOverlays(s: Session): void {
+    this.hideCountdown(s)
+    if (s.controls && !s.controls.isDestroyed()) s.controls.hide()
+    for (const w of [s.bubble, s.recorder]) if (w && !w.isDestroyed()) w.destroy()
     s.countdown = s.controls = s.bubble = s.recorder = null
     this.pendingSource = null
-    if (s.clean) {
+    // Prepare a fresh recorder for the next take once encoding has had a head start.
+    setTimeout(() => this.warm(), 1500)
+  }
+
+  private async restoreOnly(s: Session): Promise<void> {
+    // A cancel during the countdown can arrive while clean-desktop is still applying.
+    if (!s.clean) s.clean = await s.cleanP.catch(() => null)
+    if (s.clean || hasPendingRestore()) {
       const c = s.clean
       s.clean = null
       try {
@@ -322,6 +411,11 @@ export class RecordingManager {
     }
   }
 
+  private async teardown(s: Session): Promise<void> {
+    this.destroyOverlays(s)
+    await this.restoreOnly(s)
+  }
+
   /** Emergency restore when the app quits during a recording. */
   async shutdown(): Promise<void> {
     if (this.s) {
@@ -329,6 +423,67 @@ export class RecordingManager {
       s.out.destroy()
       await this.teardown(s)
     }
+    for (const w of [this.standbyRecorder, this.countdownWin, this.controlsWin]) if (w && !w.isDestroyed()) w.destroy()
+    this.standbyRecorder = this.countdownWin = this.controlsWin = null
+  }
+
+  /** Pre-create the recorder, countdown and controls windows. Safe to call repeatedly. */
+  warm(): void {
+    if (this.s) return
+    const primary = screen.getPrimaryDisplay()
+    if (!this.standbyRecorder || this.standbyRecorder.isDestroyed()) this.standbyRecorder = this.createRecorderWindow(primary)
+    if (!this.countdownWin || this.countdownWin.isDestroyed()) this.countdownWin = this.createCountdown(primary)
+    if (!this.controlsWin || this.controlsWin.isDestroyed()) this.controlsWin = this.createControls(primary)
+  }
+
+  private takeRecorder(): BrowserWindow {
+    const w = this.standbyRecorder && !this.standbyRecorder.isDestroyed() ? this.standbyRecorder : this.createRecorderWindow(screen.getPrimaryDisplay())
+    this.standbyRecorder = null
+    return w
+  }
+
+  /** Hand the session config to a recorder window that is already waiting for it. */
+  private arm(s: Session): void {
+    const w = s.recorder
+    if (!w || w.isDestroyed()) return
+    const waiter = this.configWaiters.get(w.webContents.id)
+    if (waiter) {
+      this.configWaiters.delete(w.webContents.id)
+      waiter(this.configFor(s))
+    }
+  }
+
+  private showCountdown(display: Display): BrowserWindow {
+    let w = this.countdownWin
+    if (!w || w.isDestroyed()) w = this.countdownWin = this.createCountdown(display)
+    const size = 280
+    const b = display.bounds
+    w.setBounds({ x: Math.round(b.x + (b.width - size) / 2), y: Math.round(b.y + (b.height - size) / 2), width: size, height: size })
+    w.setAlwaysOnTop(true, 'screen-saver')
+    if (!w.webContents.isLoading()) w.showInactive()
+    else w.once('ready-to-show', () => !w!.isDestroyed() && this.s && w!.showInactive())
+    return w
+  }
+
+  private hideCountdown(s: Session): void {
+    const w = s.countdown
+    if (!w || w.isDestroyed()) return
+    w.webContents.send('countdown:phase', { phase: 'idle', n: 0 })
+    w.hide()
+  }
+
+  private showControls(display: Display): BrowserWindow {
+    let w = this.controlsWin
+    if (!w || w.isDestroyed()) w = this.controlsWin = this.createControls(display)
+    const width = 344
+    const height = 54
+    const b = display.workArea
+    w.setBounds({ x: Math.round(b.x + (b.width - width) / 2), y: b.y + b.height - height - 24, width, height })
+    w.setAlwaysOnTop(true, 'screen-saver')
+    w.webContents.send('rec:state', this.state)
+    if (!w.webContents.isLoading()) w.showInactive()
+    else w.once('ready-to-show', () => !w!.isDestroyed() && w!.showInactive())
+    return w
   }
 
   private showMain(): void {
@@ -345,7 +500,7 @@ export class RecordingManager {
     const s = this.s
     if (!s?.track || !getSettings().cropBrowserChrome) return
     if (s.track.browser && s.track.browser !== browser) return
-    if (!s.track.browser && !s.track.title.includes(title)) return
+    if (!s.track.browser && !titlesMatch(s.track.title, title)) return
     s.track.browser = browser
     const crop = this.computeCrop(info)
     const prev = s.layout.crop
@@ -452,8 +607,8 @@ export class RecordingManager {
   }
 
   private createControls(display: Display): BrowserWindow {
-    const w = 330
-    const h = 64
+    const w = 344
+    const h = 54
     const b = display.workArea
     const win = createRouteWindow('controls', {
       x: Math.round(b.x + (b.width - w) / 2),
@@ -469,12 +624,11 @@ export class RecordingManager {
     })
     win.setAlwaysOnTop(true, 'screen-saver')
     hideFromCapture(win)
-    win.once('ready-to-show', () => win.showInactive())
     return win
   }
 
   private createCountdown(display: Display): BrowserWindow {
-    const size = 240
+    const size = 280
     const b = display.bounds
     const win = createRouteWindow('countdown', {
       x: Math.round(b.x + (b.width - size) / 2),
@@ -492,7 +646,6 @@ export class RecordingManager {
     win.setAlwaysOnTop(true, 'screen-saver')
     win.setIgnoreMouseEvents(true)
     hideFromCapture(win)
-    win.once('ready-to-show', () => win.showInactive())
     return win
   }
 

@@ -30,9 +30,11 @@ export async function toMp4(input: string, output: string, isH264: boolean, fps:
     const r = await runFfmpeg([...common, '-c:v', 'copy', ...tail])
     if (r.code === 0) return output
   }
+  // ultrafast + slightly higher CRF: finish feels instant; quality is still fine for screen demos.
   const r = await runFfmpeg([
     ...common,
-    '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '21', '-pix_fmt', 'yuv420p',
+    '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '23', '-pix_fmt', 'yuv420p',
+    '-threads', '0',
     '-r', String(fps),
     ...tail
   ])

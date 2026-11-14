@@ -16,8 +16,8 @@ async function refresh() {
     help.classList.remove('hidden')
     help.textContent =
       r.hostError && /not found|not registered|No such native/i.test(r.hostError)
-        ? 'Open the Loom Clone desktop app once so it can install the browser connection, then reopen this popup.'
-        : 'Start the Loom Clone desktop app. This popup connects automatically.'
+        ? 'Open the Rekoto desktop app once so it can install the browser connection, then reopen this popup.'
+        : 'Start the Rekoto desktop app. This popup connects automatically.'
     return
   }
   if (r.state.recording) {

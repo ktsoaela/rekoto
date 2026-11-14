@@ -33,6 +33,8 @@ export interface BubbleConfig {
 
 export interface Settings {
   saveFolder: string
+  /** Company or team name shown in the app header. */
+  workspaceName: string
   cameraDeviceId: string
   micDeviceId: string
   cameraEnabled: boolean
@@ -66,6 +68,10 @@ export interface StartOptions {
   cleanDesktop: boolean
   /** desktopCapturer window ids that stay visible when clean desktop minimizes windows. */
   keepWindowIds: string[]
+  /** Electron display id of the captured screen; avoids a source lookup at start. */
+  displayId?: string
+  /** Optional video title, used as the file name. */
+  title?: string
 }
 
 export interface Rect {
@@ -120,6 +126,11 @@ export interface VideoItem {
   createdAt: number
   duration: number | null
   thumb: string | null
+}
+
+export interface DiskInfo {
+  free: number
+  total: number
 }
 
 export interface ExtensionInfo {

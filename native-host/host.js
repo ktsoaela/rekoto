@@ -1,10 +1,10 @@
-// Native messaging host for the Loom Clone browser extensions.
+// Native messaging host for the Rekoto browser extensions.
 // Browsers start this process and speak length-prefixed JSON over stdin/stdout.
 // It relays messages to the running desktop app over a named pipe.
 'use strict'
 const net = require('net')
 
-const PIPE = '\\\\.\\pipe\\loom-clone-bridge'
+const PIPE = '\\\\.\\pipe\\Rekoto-bridge'
 let socket = null
 let connected = false
 let queue = []

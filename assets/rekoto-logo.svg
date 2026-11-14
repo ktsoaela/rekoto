@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Rekoto">
+  <defs>
+    <linearGradient id="plate" x1="0" y1="0" x2="512" y2="512" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#2a2418"/>
+      <stop offset="100%" stop-color="#0f0e0c"/>
+    </linearGradient>
+    <linearGradient id="r" x1="140" y1="120" x2="380" y2="400" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#ffe566"/>
+      <stop offset="45%" stop-color="#f5c518"/>
+      <stop offset="100%" stop-color="#d4a017"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="118" fill="url(#plate)"/>
+  <path fill="url(#r)" d="
+    M148 128h132c62 0 104 36 104 90 0 42-24 74-64 86l72 108h-74l-64-100h-42v100h-64V128zm64 56v76h66c28 0 46-16 46-38s-18-38-46-38H212z
+  "/>
+  <circle cx="372" cy="372" r="36" fill="#dc2626"/>
+  <circle cx="372" cy="372" r="36" fill="none" stroke="#fecaca" stroke-opacity="0.4" stroke-width="6"/>
+</svg>

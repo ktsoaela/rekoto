@@ -1,15 +1,16 @@
 {
   "manifest_version": 3,
-  "name": "Loom Clone Recorder",
+  "name": "Rekoto Recorder",
   "version": "0.1.0",
-  "description": "Start recordings of this window, mask passwords and hide bookmarks while recording with the Loom Clone desktop app.",
+  "description": "Start recordings of this window, mask passwords and hide bookmarks while recording with the Rekoto desktop app.",
   "browser_specific_settings": {
-    "gecko": { "id": "recorder@loomclone.app", "strict_min_version": "115.0" }
+    "gecko": { "id": "recorder@Rekoto.app", "strict_min_version": "115.0" }
   },
   "permissions": ["nativeMessaging", "tabs", "storage"],
   "host_permissions": ["<all_urls>"],
   "background": { "scripts": ["background.js"] },
-  "action": { "default_title": "Loom Clone", "default_popup": "popup.html" },
+  "action": { "default_title": "Rekoto", "default_popup": "popup.html", "default_icon": { "16": "icons/16.png", "32": "icons/32.png", "48": "icons/48.png", "128": "icons/128.png" } },
+  "icons": { "16": "icons/16.png", "32": "icons/32.png", "48": "icons/48.png", "128": "icons/128.png" },
   "content_scripts": [
     {
       "matches": ["<all_urls>"],

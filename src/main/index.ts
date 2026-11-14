@@ -4,7 +4,14 @@ import type { ExtensionInfo, Settings, SourceInfo, StartOptions, VideoItem } fro
 import { getSettings, updateSettings } from './settings'
 import { handleMediaProtocol, registerMediaScheme } from './media-protocol'
 import { deleteVideo, listVideos, renameVideo, watchFolder } from './library'
-import { hasPendingRestore, restoreCleanDesktop, wallpaperFile, isSupported as cleanSupported } from './clean-desktop'
+import {
+  hasPendingRestore,
+  restoreCleanDesktop,
+  wallpaperFile,
+  isSupported as cleanSupported,
+  warmCleanDesktop,
+  stopCleanDesktopHelper
+} from './clean-desktop'
 import {
   CHROME_EXTENSION_ID,
   FIREFOX_EXTENSION_ID,
@@ -24,12 +31,14 @@ import { ffmpegPath } from './ffmpeg'
 registerMediaScheme()
 
 // Hardware video encoders hang MediaRecorder on some Windows GPU drivers (no data is ever produced).
-// Software encoding is reliable and fast enough for screen recordings; set LC_HW_ENCODE=1 to opt back in.
-if (!process.env.LC_HW_ENCODE) app.commandLine.appendSwitch('disable-accelerated-video-encode')
+// Software encoding is reliable and fast enough for screen recordings; set Rekoto_HW_ENCODE=1 to opt back in.
+if (!process.env.Rekoto_HW_ENCODE) app.commandLine.appendSwitch('disable-accelerated-video-encode')
 
 if (!app.requestSingleInstanceLock()) {
   app.quit()
 }
+
+app.setAppUserModelId('app.Rekoto.desktop')
 
 let mainWindow: BrowserWindow | null = null
 let stopWatching: (() => void) | null = null
@@ -49,7 +58,7 @@ function createMainWindow(): void {
     height: 820,
     minWidth: 900,
     minHeight: 600,
-    title: 'Loom Clone'
+    title: 'Rekoto'
   })
   mainWindow.once('ready-to-show', () => mainWindow?.show())
   mainWindow.on('closed', () => {
@@ -67,15 +76,20 @@ function rewatch(): void {
   stopWatching = watchFolder(getSettings().saveFolder, () => sendMain('library:changed'))
 }
 
+/** Last capture sources seen by the Record screen; reused at start to skip a second full scan. */
+const sourceCache = new Map<string, Electron.DesktopCapturerSource>()
+
 async function getSources(): Promise<SourceInfo[]> {
   const sources = await desktopCapturer.getSources({
     types: ['screen', 'window'],
     thumbnailSize: { width: 480, height: 270 },
     fetchWindowIcons: true
   })
+  sourceCache.clear()
+  for (const src of sources) sourceCache.set(src.id, src)
   const own = new Set(BrowserWindow.getAllWindows().map((w) => w.getMediaSourceId()))
   return sources
-    .filter((s) => !own.has(s.id) && s.name !== 'Loom Clone')
+    .filter((s) => !own.has(s.id) && s.name !== 'Rekoto')
     .map((s) => ({
       id: s.id,
       name: s.name,
@@ -137,6 +151,16 @@ function registerIpc(): void {
   ipcMain.handle('library:delete', (_e, p: string) => deleteVideo(getSettings().saveFolder, p))
   ipcMain.handle('library:rename', (_e, p: string, name: string) => renameVideo(getSettings().saveFolder, p, name))
   ipcMain.handle('library:reveal', (_e, p: string) => shell.showItemInFolder(p))
+  ipcMain.handle('library:disk', async () => {
+    try {
+      const folder = getSettings().saveFolder
+      fs.mkdirSync(folder, { recursive: true })
+      const st = await fs.promises.statfs(folder)
+      return { free: st.bavail * st.bsize, total: st.blocks * st.bsize }
+    } catch {
+      return null
+    }
+  })
   ipcMain.handle('library:openFolder', async () => {
     fs.mkdirSync(getSettings().saveFolder, { recursive: true })
     await shell.openPath(getSettings().saveFolder)
@@ -253,8 +277,13 @@ app.whenReady().then(async () => {
   session.defaultSession.setDisplayMediaRequestHandler(async (_req, callback) => {
     const pending = recorder.pendingSource
     if (!pending) return callback({})
-    const sources = await desktopCapturer.getSources({ types: ['screen', 'window'], thumbnailSize: { width: 1, height: 1 } })
-    const src = sources.find((s) => s.id === pending.id)
+    // Reuse the source the Record screen already listed; only scan when it is unknown.
+    let src = sourceCache.get(pending.id)
+    if (!src) {
+      const types: Array<'screen' | 'window'> = pending.id.startsWith('screen:') ? ['screen'] : ['window']
+      const sources = await desktopCapturer.getSources({ types, thumbnailSize: { width: 1, height: 1 } })
+      src = sources.find((s) => s.id === pending.id)
+    }
     if (!src) return callback({})
     callback(pending.audio ? { video: src, audio: 'loopback' } : { video: src })
   })
@@ -262,6 +291,9 @@ app.whenReady().then(async () => {
   registerIpc()
   createMainWindow()
   rewatch()
+  // Warm the clean-desktop helper and the recording windows so Start is instant.
+  warmCleanDesktop()
+  mainWindow?.once('ready-to-show', () => setTimeout(() => recorder.warm(), 300))
   await registerNativeHost()
   startBridge((m) => void onExtensionMessage(m))
 
@@ -278,6 +310,7 @@ app.on('before-quit', (e) => {
 })
 
 app.on('will-quit', () => {
+  stopCleanDesktopHelper()
   stopWatching?.()
   stopBridge()
 })

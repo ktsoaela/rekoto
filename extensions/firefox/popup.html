@@ -5,18 +5,20 @@
     <link rel="stylesheet" href="popup.css" />
   </head>
   <body>
-    <header><span class="logo"></span> Loom Clone</header>
-    <div id="status" class="status">Connecting…</div>
-    <div id="idle" class="hidden">
-      <button id="start" class="primary"><span class="dot"></span> Record this window</button>
-      <p class="hint">Records this browser window with your camera and mic settings from the app. Bookmarks and the address bar are cropped out and passwords are masked.</p>
-    </div>
-    <div id="recording" class="hidden">
-      <button id="pause">Pause</button>
-      <button id="stop" class="primary">Stop and save</button>
-    </div>
-    <label class="opt"><input type="checkbox" id="alwaysMask" /> Always mask password fields</label>
-    <div id="help" class="help hidden"></div>
+    <header><span class="logo"></span> Rekoto Recorder</header>
+    <main>
+      <div id="status" class="status">Connecting…</div>
+      <div id="idle" class="actions hidden">
+        <button id="start" class="primary"><span class="dot"></span> Record this window</button>
+        <p class="hint">Uses your camera and microphone settings from the desktop app. Toolbars and bookmarks are cropped out, and password fields are masked.</p>
+      </div>
+      <div id="recording" class="actions hidden">
+        <button id="stop" class="primary">Finish and save</button>
+        <button id="pause">Pause</button>
+      </div>
+      <p id="help" class="help hidden"></p>
+      <label class="opt"><input type="checkbox" id="alwaysMask" /> Always mask password fields</label>
+    </main>
     <script src="popup.js"></script>
   </body>
 </html>

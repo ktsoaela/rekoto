@@ -1,14 +1,34 @@
 import { useEffect, useState } from 'react'
 
+type Phase = { phase: 'prep' | 'count' | 'idle'; n: number }
+
 export default function Countdown() {
-  const [n, setN] = useState(3)
+  const [phase, setPhase] = useState<Phase>({ phase: 'idle', n: 0 })
+
   useEffect(() => {
-    const t = window.setInterval(() => setN((v) => Math.max(1, v - 1)), 1000)
-    return () => window.clearInterval(t)
+    const off = window.api.on('countdown:phase', (p) => setPhase(p as Phase))
+    return off
   }, [])
+
+  if (phase.phase === 'idle') return null
+
+  if (phase.phase === 'prep') {
+    return (
+      <div className="countdown">
+        <div className="countdown-card prep">
+          <span className="countdown-spin" aria-hidden />
+          <strong>Starting</strong>
+          <span className="countdown-sub">Almost there</span>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="countdown">
-      <span key={n}>{n}</span>
+      <span className="countdown-digit" key={phase.n}>
+        {phase.n}
+      </span>
     </div>
   )
 }

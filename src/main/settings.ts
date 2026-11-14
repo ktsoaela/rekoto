@@ -7,7 +7,8 @@ const file = (): string => path.join(app.getPath('userData'), 'settings.json')
 
 export function defaultSettings(): Settings {
   return {
-    saveFolder: path.join(app.getPath('videos'), 'Loom Clone'),
+    saveFolder: path.join(app.getPath('videos'), 'Rekoto'),
+    workspaceName: 'My Company',
     cameraDeviceId: '',
     micDeviceId: '',
     cameraEnabled: true,
@@ -22,8 +23,8 @@ export function defaultSettings(): Settings {
     cornerRadius: 14,
     background: {
       kind: 'gradient',
-      color1: '#4f46e5',
-      color2: '#0ea5e9',
+      color1: '#0d0d0d',
+      color2: '#3a2f00',
       angle: 135,
       imagePath: null,
       logoPath: null,

@@ -1,8 +1,8 @@
 // Masks password and other secret fields while the desktop app is recording,
 // and reports the page viewport so the recorder can crop out tabs, address bar and bookmarks.
 ;(() => {
-  if (window.__loomCloneContent) return
-  window.__loomCloneContent = true
+  if (window.__RekotoContent) return
+  window.__RekotoContent = true
   const api = globalThis.browser ?? globalThis.chrome
 
   const SECRET_SELECTOR = [
@@ -11,8 +11,13 @@
     'input[autocomplete~="current-password"]',
     'input[autocomplete~="new-password"]',
     'input[autocomplete~="one-time-code"]',
+    'input[autocomplete~="one-time-code" i]',
     'input[autocomplete~="cc-number"]',
-    'input[autocomplete~="cc-csc"]'
+    'input[autocomplete~="cc-csc"]',
+    'input[name*="password" i]',
+    'input[id*="password" i]',
+    'input[name*="passwd" i]',
+    'input[autocomplete="otp"]'
   ].join(',')
 
   const CSS = `
@@ -21,12 +26,17 @@ html.lc-mask :is(${SECRET_SELECTOR}) {
   -webkit-text-fill-color: transparent !important;
   text-shadow: none !important;
   caret-color: transparent !important;
-  -webkit-text-security: none !important;
+  -webkit-text-security: disc !important;
   background-image: repeating-linear-gradient(-45deg, rgba(128,128,128,.45) 0 6px, rgba(128,128,128,.2) 6px 12px) !important;
 }
 html.lc-mask :is(${SECRET_SELECTOR})::selection { background: transparent !important; color: transparent !important; }
 html.lc-mask :is(${SECRET_SELECTOR})::placeholder { color: transparent !important; }
 html.lc-mask :is(${SECRET_SELECTOR}):-webkit-autofill { -webkit-text-fill-color: transparent !important; }
+/* Soft-hide common page-level password manager banners drawn in the document */
+html.lc-mask [data-lastpass-icon-root],
+html.lc-mask [data-dashlane-root],
+html.lc-mask [data-bwfilled],
+html.lc-mask iframe[src*="chrome-extension://"] { opacity: 0 !important; pointer-events: none !important; }
 `
 
   let styleEl = null
