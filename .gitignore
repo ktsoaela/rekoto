@@ -3,3 +3,9 @@ out/
 dist/
 *.log
 .DS_Store
+.tmp-*
+*.tmp
+package-lock.json.tmp
+.env
+.env.*
+!.env.example

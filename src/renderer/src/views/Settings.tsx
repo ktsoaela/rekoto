@@ -329,11 +329,16 @@ function ExtensionSetup() {
           title="Chrome & Edge"
           icon="chrome"
           live={connected('chrome') || connected('edge')}
-          steps={[
-            <>Open <code>chrome://extensions</code> or <code>edge://extensions</code></>,
-            <>Turn on <b>Developer mode</b></>,
-            <>Click <b>Load unpacked</b> and select the folder</>
-          ]}
+          steps={
+            connected('chrome') || connected('edge')
+              ? [<>Extension is linked to Rekoto. Keep the desktop app open while you record.</>]
+              : [
+                  <>Open <code>chrome://extensions</code> or <code>edge://extensions</code></>,
+                  <>Turn on <b>Developer mode</b></>,
+                  <>Click <b>Load unpacked</b> (or <b>Reload</b> if it is already installed) and select the folder</>,
+                  <>Click the Rekoto toolbar icon once — the popup must say <b>Connected to Rekoto</b></>
+                ]
+          }
           folder={info.chromeFolder}
         />
         <ExtCard

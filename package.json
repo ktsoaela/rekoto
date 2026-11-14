@@ -1,8 +1,18 @@
 {
   "name": "rekoto",
   "productName": "Rekoto",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "Local screen and camera recorder with branded backgrounds, clean desktop mode and browser privacy extensions.",
+  "author": "Khotso Tsoaela",
+  "license": "MIT",
+  "homepage": "https://ktsoaela.github.io/rekoto/",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ktsoaela/rekoto.git"
+  },
+  "bugs": {
+    "url": "https://github.com/ktsoaela/rekoto/issues"
+  },
   "main": "./out/main/index.js",
   "private": true,
   "scripts": {

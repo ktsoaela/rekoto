@@ -1,5 +1,6 @@
 /**
- * Rasterizes the Rekoto mark (charcoal plate + gold R + red record dot) into PNG/ICO assets.
+ * Rasterizes the Rekoto mark: charcoal plate + gold video-camera (app icon) + red record dot.
+ * Camera geometry matches Icon.tsx `camera`: body rect + right-side wedge.
  */
 import { deflateSync } from 'zlib'
 import { mkdirSync, writeFileSync, unlinkSync, existsSync } from 'fs'
@@ -31,66 +32,62 @@ function insideRoundedRect(x, y, size, radius) {
   return dist(x, y, cx, cy) <= radius + 0.5
 }
 
-function inRect(x, y, x0, y0, x1, y1) {
-  return x >= x0 && x <= x1 && y >= y0 && y <= y1
+/** Point-in-triangle (barycentric). */
+function inTriangle(px, py, ax, ay, bx, by, cx, cy) {
+  const v0x = cx - ax
+  const v0y = cy - ay
+  const v1x = bx - ax
+  const v1y = by - ay
+  const v2x = px - ax
+  const v2y = py - ay
+  const dot00 = v0x * v0x + v0y * v0y
+  const dot01 = v0x * v1x + v0y * v1y
+  const dot02 = v0x * v2x + v0y * v2y
+  const dot11 = v1x * v1x + v1y * v1y
+  const dot12 = v1x * v2x + v1y * v2y
+  const inv = 1 / (dot00 * dot11 - dot01 * dot01)
+  const u = (dot11 * dot02 - dot01 * dot12) * inv
+  const v = (dot00 * dot12 - dot01 * dot02) * inv
+  return u >= 0 && v >= 0 && u + v <= 1
 }
 
-/** Geometric capital R in normalized 0..1 box coords relative to icon. */
-function inLetterR(x, y, size) {
-  const L = size * 0.29
-  const T = size * 0.26
-  const W = size * 0.42
-  const H = size * 0.48
-  const stem = W * 0.22
-  const bowlH = H * 0.46
-  const bowlR = bowlH * 0.55
-  const nx = (x - L) / W
-  const ny = (y - T) / H
-  if (nx < 0 || nx > 1.05 || ny < 0 || ny > 1) return false
+/**
+ * App camera icon in a 24×24 viewBox, mapped into the icon with padding.
+ * Body: (3,6)-(15,18)  Wedge: (15,10)-(20,7)-(20,17)
+ */
+function inCamera(x, y, size) {
+  const pad = size * 0.18
+  const s = (size - pad * 2) / 24
+  const ox = pad
+  const oy = pad
+  const toX = (vx) => ox + vx * s
+  const toY = (vy) => oy + vy * s
 
-  // Stem
-  if (nx <= stem / W + 0.02) return true
-
-  // Upper bowl (rounded D attached to stem)
-  const bx = nx - stem / W
-  const by = ny
-  if (by <= bowlH / H) {
-    const cx = stem / W + 0.28
-    const cy = bowlH / H / 2
-    const rx = 0.34
-    const ry = bowlH / H / 2
-    const dx = (nx - cx) / rx
-    const dy = (ny - cy) / ry
-    if (nx >= stem / W && dx * dx + dy * dy <= 1) {
-      // hollow inner
-      const irx = rx * 0.45
-      const iry = ry * 0.55
-      const idx = (nx - cx) / irx
-      const idy = (ny - cy) / iry
-      if (nx > stem / W + 0.12 && idx * idx + idy * idy <= 1) return false
-      return true
+  const x0 = toX(3)
+  const y0 = toY(6)
+  const x1 = toX(15)
+  const y1 = toY(18)
+  // Slightly round the body corners for a friendlier app-icon look
+  const br = size * 0.035
+  if (x >= x0 && x <= x1 && y >= y0 && y <= y1) {
+    const lx = x < x0 + br ? x0 + br : x > x1 - br ? x1 - br : x
+    const ly = y < y0 + br ? y0 + br : y > y1 - br ? y1 - br : y
+    if (dist(x, y, lx, ly) <= br + 0.5 || (x >= x0 + br && x <= x1 - br) || (y >= y0 + br && y <= y1 - br)) {
+      // Exclude only outside the rounded-rect corner circles
+      const inCornerZone = (x < x0 + br || x > x1 - br) && (y < y0 + br || y > y1 - br)
+      if (!inCornerZone || dist(x, y, lx, ly) <= br + 0.5) return true
     }
-    // fill bar connecting stem to bowl
-    if (nx < cx && by > 0.08 && by < bowlH / H - 0.08) return true
   }
 
-  // Diagonal leg
-  const legStartY = bowlH / H - 0.02
-  if (ny >= legStartY) {
-    const t = (ny - legStartY) / (1 - legStartY)
-    const center = stem / W + 0.08 + t * 0.55
-    const thickness = 0.11 + t * 0.02
-    if (Math.abs(nx - center) <= thickness) return true
-  }
-  return false
+  return inTriangle(x, y, toX(15), toY(10), toX(20), toY(7), toX(20), toY(17))
 }
 
 function paint(size) {
   const data = new Uint8Array(size * size * 4)
   const plateR = size * 0.22
-  const recCx = size * 0.72
-  const recCy = size * 0.72
-  const recR = size * 0.07
+  const recCx = size * 0.26
+  const recCy = size * 0.74
+  const recR = size * 0.055
   const plateA = [42, 36, 24, 255]
   const plateB = [15, 14, 12, 255]
   const goldA = [255, 229, 102, 255]
@@ -107,8 +104,8 @@ function paint(size) {
       const gt = (x + y) / (2 * Math.max(1, size - 1))
       let c = mix(plateA, plateB, gt * 0.9 + 0.1)
 
-      if (inLetterR(x, y, size)) {
-        const t = Math.min(1, dist(x, y, size * 0.45, size * 0.45) / (size * 0.45))
+      if (inCamera(x, y, size)) {
+        const t = Math.min(1, dist(x, y, size * 0.42, size * 0.5) / (size * 0.4))
         c = mix(goldA, goldB, t * t)
       }
 
@@ -200,7 +197,6 @@ write(join(root, 'build', 'icon.png'), pngs.get(512))
 write(join(root, 'build', 'icon.ico'), ico)
 write(join(root, 'assets', 'rekoto-logo.png'), pngs.get(512))
 write(join(root, 'assets', 'Rekoto-Desktop.png'), pngs.get(256))
-// Window / tab favicon for the Electron renderer
 write(join(root, 'src', 'renderer', 'public', 'favicon.ico'), ico)
 write(join(root, 'src', 'renderer', 'public', 'favicon.png'), pngs.get(32))
 write(join(root, 'src', 'renderer', 'public', 'icon-192.png'), pngs.get(128))
@@ -211,10 +207,9 @@ for (const browser of ['chrome', 'firefox']) {
   }
 }
 
-// Remove old Capora asset names if present
 for (const old of ['assets/capora-logo.png', 'assets/Capora-Desktop.png', 'assets/capora-logo.svg']) {
   const p = join(root, old)
   if (existsSync(p)) unlinkSync(p)
 }
 
-console.log('Wrote yellow Rekoto icons: build/icon.ico, favicon, assets/rekoto-logo.png, extension icons')
+console.log('Wrote Rekoto camera icons: build/icon.ico, favicon, assets/rekoto-logo.png')

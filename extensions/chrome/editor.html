@@ -1,0 +1,87 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Rekoto screenshot</title>
+    <link rel="stylesheet" href="editor.css" />
+  </head>
+  <body>
+    <header class="bar">
+      <span class="logo" aria-hidden="true">R<i></i></span>
+      <input id="name" class="name" aria-label="Image name" />
+      <div class="spacer"></div>
+      <button id="ocr" class="btn" disabled>
+        <svg viewBox="0 0 24 24"><path d="M4 7V5a1 1 0 0 1 1-1h2M17 4h2a1 1 0 0 1 1 1v2M20 17v2a1 1 0 0 1-1 1h-2M7 20H5a1 1 0 0 1-1-1v-2"/><path d="M8 9h8M12 9v7"/></svg>
+        Extract text
+      </button>
+      <button id="copy" class="btn" disabled>
+        <svg viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/></svg>
+        Copy
+      </button>
+      <button id="download" class="btn" disabled>
+        <svg viewBox="0 0 24 24"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></svg>
+        Download
+      </button>
+      <button id="save" class="btn btn-accent" disabled>
+        <svg viewBox="0 0 24 24"><path d="M5 4h11l3 3v13H5z"/><path d="M8 4v5h7V4M8 20v-6h8v6"/></svg>
+        Save to PC
+      </button>
+    </header>
+
+    <div class="work">
+      <aside class="tools" id="tools" aria-label="Tools">
+        <button data-tool="pen" title="Pen (P)"><svg viewBox="0 0 24 24"><path d="M4 20l4-1L19 8l-3-3L5 16z"/></svg></button>
+        <button data-tool="highlight" title="Highlighter (H)"><svg viewBox="0 0 24 24"><path d="M9 15l-4 5h6l2-2M9 15l7-11 4 3-7 11z"/></svg></button>
+        <button data-tool="arrow" class="active" title="Arrow (A)"><svg viewBox="0 0 24 24"><path d="M5 19L19 5M11 5h8v8"/></svg></button>
+        <button data-tool="line" title="Line (L)"><svg viewBox="0 0 24 24"><path d="M5 19L19 5"/></svg></button>
+        <button data-tool="rect" title="Rectangle (R)"><svg viewBox="0 0 24 24"><rect x="4" y="6" width="16" height="12" rx="1.5"/></svg></button>
+        <button data-tool="ellipse" title="Ellipse (E)"><svg viewBox="0 0 24 24"><ellipse cx="12" cy="12" rx="8" ry="6"/></svg></button>
+        <button data-tool="text" title="Text (T)"><svg viewBox="0 0 24 24"><path d="M5 6V4h14v2M12 4v16M9 20h6"/></svg></button>
+        <button data-tool="blur" title="Blur (B)"><svg viewBox="0 0 24 24"><path d="M4 4h4v4H4zM12 4h4v4h-4zM8 8h4v4H8zM16 8h4v4h-4zM4 12h4v4H4zM12 12h4v4h-4zM8 16h4v4H8zM16 16h4v4h-4z"/></svg></button>
+        <button data-tool="crop" title="Crop (C)"><svg viewBox="0 0 24 24"><path d="M6 2v16h16M2 6h16v16"/></svg></button>
+        <div class="tool-sep"></div>
+        <div class="swatches" id="swatches"></div>
+        <div class="sizes" id="sizes"></div>
+        <div class="tool-sep"></div>
+        <button id="undo" title="Undo (Ctrl+Z)"><svg viewBox="0 0 24 24"><path d="M9 14L4 9l5-5"/><path d="M4 9h10a6 6 0 0 1 0 12h-3"/></svg></button>
+        <button id="redo" title="Redo (Ctrl+Y)"><svg viewBox="0 0 24 24"><path d="M15 14l5-5-5-5"/><path d="M20 9H10a6 6 0 0 0 0 12h3"/></svg></button>
+      </aside>
+
+      <main class="stage" id="stage">
+        <div class="empty hidden" id="empty-desktop">
+          <div class="empty-icon"><svg viewBox="0 0 24 24"><rect x="2" y="4" width="20" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></svg></div>
+          <h1>Capture a screen or app window</h1>
+          <p>Your browser will ask which screen or window to capture. Nothing is recorded, we take one image.</p>
+          <button id="pick-desktop" class="btn btn-accent btn-lg">Choose screen or window</button>
+        </div>
+        <div class="empty hidden" id="empty-open">
+          <div class="empty-icon"><svg viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M13.5 6.5l4 4"/></svg></div>
+          <h1>Annotate an image</h1>
+          <p>Drop an image here, paste one with <kbd>Ctrl</kbd> <kbd>V</kbd>, or open a file from your PC.</p>
+          <div class="row">
+            <button id="open-file" class="btn btn-accent btn-lg">Open image</button>
+            <button id="paste" class="btn btn-lg">Paste from clipboard</button>
+          </div>
+          <input type="file" id="file" accept="image/*" hidden />
+        </div>
+        <div class="canvas-wrap hidden" id="canvas-wrap">
+          <canvas id="canvas"></canvas>
+          <textarea id="text-input" class="text-input hidden" rows="1"></textarea>
+        </div>
+      </main>
+
+      <aside class="ocr-panel hidden" id="ocr-panel">
+        <div class="ocr-head">
+          <strong>Extracted text</strong>
+          <button id="ocr-close" class="icon" aria-label="Close"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+        </div>
+        <textarea id="ocr-text" spellcheck="false"></textarea>
+        <button id="ocr-copy" class="btn btn-accent">Copy text</button>
+        <p class="muted small">Text recognition runs on this PC with the Windows OCR engine.</p>
+      </aside>
+    </div>
+
+    <div class="toast hidden" id="toast"><span id="toast-text"></span><button id="toast-action" class="hidden"></button></div>
+    <script src="editor.js"></script>
+  </body>
+</html>

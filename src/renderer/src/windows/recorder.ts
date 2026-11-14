@@ -6,7 +6,13 @@ import { FrameSource } from '../studio/frames'
 const api = window.api
 const even = (n: number): number => Math.max(2, Math.round(n / 2) * 2)
 
-function pickMime(): string {
+function pickMime(format?: 'mp4' | 'webm'): string {
+  // WebM output is kept as recorded, so use a WebM-native codec (VP9) that plays everywhere.
+  if (format === 'webm') {
+    const webm = ['video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm']
+    const hit = webm.find((m) => MediaRecorder.isTypeSupported(m))
+    if (hit) return hit
+  }
   const candidates = [
     'video/webm;codecs=h264,opus',
     'video/x-matroska;codecs=avc1,opus',
@@ -113,7 +119,7 @@ export async function runRecorder(): Promise<void> {
       for (const t of dest.stream.getAudioTracks()) out.addTrack(t)
     }
 
-    const mimeType = pickMime()
+    const mimeType = pickMime(options.format)
     const rec = new MediaRecorder(out, {
       mimeType: mimeType || undefined,
       videoBitsPerSecond: H >= 1440 ? 16_000_000 : H >= 1080 ? 9_000_000 : 5_000_000,
@@ -179,6 +185,7 @@ export async function runRecorder(): Promise<void> {
     rec.start(1000)
     await api.invoke('recorder:ready', rec.mimeType || mimeType)
   } catch (e) {
+    console.error('[recorder] start failed:', (e as Error)?.name, (e as Error)?.message)
     for (const s of sources) s.stop()
     for (const s of streams) s.getTracks().forEach((t) => t.stop())
     const err = e as Error

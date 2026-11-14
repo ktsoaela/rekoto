@@ -6,11 +6,13 @@
   <p><strong>A local, private screen recorder for Windows — screen, window, or camera, saved as MP4 on your PC.</strong></p>
 
   <p>
+    <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-375348?style=flat-square" /></a>
+    <a href="docs/"><img alt="Docs" src="https://img.shields.io/badge/docs-guide-547f72?style=flat-square" /></a>
     <img alt="Stack" src="https://img.shields.io/badge/Electron-React_TypeScript-436659?style=flat-square" />
-    <img alt="Platform" src="https://img.shields.io/badge/Windows-10+-547f72?style=flat-square" />
-    <img alt="Privacy" src="https://img.shields.io/badge/Local_only-no_cloud-375348?style=flat-square" />
   </p>
 </div>
+
+**[See Rekoto →](https://ktsoaela.github.io/rekoto/)**
 
 **Author:** [Khotso Tsoaela](https://github.com/ktsoaela) (`@ktsoaela`)
 
@@ -42,6 +44,7 @@ Nothing is uploaded. There are no accounts and no cloud.
 ```bash
 npm install
 npm run icons      # taskbar / desktop icon assets
+npm run build:ext  # Chrome / Edge / Firefox companions
 npm run dev        # run in development
 npm run build      # build app bundles into out/
 npm run dist       # Windows installer into dist/ (uses build/icon.ico)
@@ -54,7 +57,8 @@ If `npm install` did not download Electron, run `node node_modules/electron/inst
 | Dev app | `npm run dev` |
 | Rebuild icons | `npm run icons` |
 | Build extensions | `npm run build:ext` |
-| Windows installer | `npm run dist` |
+| Typecheck | `npm run typecheck` |
+| Windows installer | `npm run dist` → `dist/` |
 
 ### Icons
 
@@ -103,4 +107,23 @@ Browser extension ──native messaging──> host.js ──named pipe──> 
 
 - Hardware video encoding is off by default (some Windows GPU drivers hang MediaRecorder). To try it: `Rekoto_HW_ENCODE=1`.
 - Overlay windows use `setContentProtection` (Windows 10 2004+).
-- Password masking covers normal page inputs. Fields in closed shadow DOMs, or in a password-manager window, are not masked — use clean-desktop mode to minimize those windows.
+- Password masking covers normal page inputs. Fields in closed shadow DOMs, or in a password-manager window, are not masked — use clean-desktop mode to minimize those windows. Chrome’s own password UI is not maskable.
+
+---
+
+## Documentation map
+
+| Doc | Purpose |
+| --- | --- |
+| [docs/index.html](docs/index.html) | Public product page (GitHub Pages) |
+| [CHANGELOG.md](CHANGELOG.md) | Release history |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | Dev setup and PR guidelines |
+| [design-system/rekoto/MASTER.md](design-system/rekoto/MASTER.md) | UI colours, layout, brand rules |
+
+Turn on GitHub Pages for the `docs` folder on the `main` branch.
+
+---
+
+## License
+
+MIT © Khotso Tsoaela

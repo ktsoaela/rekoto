@@ -187,6 +187,32 @@ function Invoke-Restore($a) {
   if ($a.minimized) { [LcDesk]::Restore([long[]]@($a.minimized | ForEach-Object { [long]$_ })) }
   return @{ ok = $true }
 }
+
+# Windows built-in OCR (Windows.Media.Ocr). Loaded on first use.
+$script:ocrReady = $false
+function Invoke-Ocr([string]$Path) {
+  if (-not $script:ocrReady) {
+    Add-Type -AssemblyName System.Runtime.WindowsRuntime
+    $script:asTask = ([System.WindowsRuntimeSystemExtensions].GetMethods() | Where-Object { $_.Name -eq 'AsTask' -and $_.GetParameters().Count -eq 1 -and $_.GetParameters()[0].ParameterType.Name -like 'IAsyncOperation*' -and $_.GetParameters()[0].ParameterType.Name -notlike '*Progress*' })[0]
+    [void][Windows.Storage.StorageFile, Windows.Storage, ContentType = WindowsRuntime]
+    [void][Windows.Media.Ocr.OcrEngine, Windows.Foundation, ContentType = WindowsRuntime]
+    [void][Windows.Graphics.Imaging.BitmapDecoder, Windows.Graphics, ContentType = WindowsRuntime]
+    $script:ocrReady = $true
+  }
+  function Await($op, [Type]$t) { $task = $script:asTask.MakeGenericMethod($t).Invoke($null, @($op)); [void]$task.Wait(-1); $task.Result }
+  $file = Await ([Windows.Storage.StorageFile]::GetFileFromPathAsync($Path)) ([Windows.Storage.StorageFile])
+  $stream = Await ($file.OpenAsync([Windows.Storage.FileAccessMode]::Read)) ([Windows.Storage.Streams.IRandomAccessStream])
+  try {
+    $decoder = Await ([Windows.Graphics.Imaging.BitmapDecoder]::CreateAsync($stream)) ([Windows.Graphics.Imaging.BitmapDecoder])
+    $bitmap = Await ($decoder.GetSoftwareBitmapAsync()) ([Windows.Graphics.Imaging.SoftwareBitmap])
+    $engine = [Windows.Media.Ocr.OcrEngine]::TryCreateFromUserProfileLanguages()
+    if (-not $engine) { throw 'No Windows OCR language is installed. Add one in Settings > Time & language > Language.' }
+    $result = Await ($engine.RecognizeAsync($bitmap)) ([Windows.Media.Ocr.OcrResult])
+    return @{ text = (($result.Lines | ForEach-Object { $_.Text }) -join [Environment]::NewLine) }
+  } finally {
+    $stream.Dispose()
+  }
+}
 `
 
 const ONE_SHOT_SCRIPT = String.raw`
@@ -195,6 +221,7 @@ param([string]$Action, [string]$ArgsFile, [string]$StateFile, [string]$BackupDir
 $a = [IO.File]::ReadAllText($ArgsFile) | ConvertFrom-Json
 if ($Action -eq 'apply') { Invoke-Apply $a $StateFile $BackupDir | ConvertTo-Json -Compress -Depth 5 }
 elseif ($Action -eq 'restore') { Invoke-Restore $a | Out-Null; '{"ok":true}' }
+elseif ($Action -eq 'ocr') { Invoke-Ocr ([string]$a.path) | ConvertTo-Json -Compress }
 `
 
 const SERVER_SCRIPT = PS_HEADER + String.raw`
@@ -210,6 +237,7 @@ while ($true) {
     $id = $req.id
     if ($req.action -eq 'apply') { $res = Invoke-Apply $req.args ([string]$req.stateFile) ([string]$req.backupDir) }
     elseif ($req.action -eq 'restore') { $res = Invoke-Restore $req.args }
+    elseif ($req.action -eq 'ocr') { $res = Invoke-Ocr ([string]$req.args.path) }
     else { $res = @{ pong = $true } }
     $o = [ordered]@{ id = $id; ok = $true; result = $res }
   } catch {
@@ -239,6 +267,8 @@ function writeScript(name: string, body: string): string {
 function asciiJson(v: unknown): string {
   return JSON.stringify(v).replace(/[\u007f-￿]/g, (c) => '\\u' + c.charCodeAt(0).toString(16).padStart(4, '0'))
 }
+
+type Action = 'apply' | 'restore' | 'ocr'
 
 // ---------- persistent PowerShell helper ----------
 
@@ -310,7 +340,7 @@ export function stopCleanDesktopHelper(): void {
   serverReady = null
 }
 
-async function viaServer(action: 'apply' | 'restore', args: unknown, extra: Record<string, string>): Promise<unknown | undefined> {
+async function viaServer(action: Action, args: unknown, extra: Record<string, string>): Promise<unknown | undefined> {
   if (!server) warmCleanDesktop()
   const ready = serverReady ? await serverReady : false
   const proc = server
@@ -320,7 +350,7 @@ async function viaServer(action: 'apply' | 'restore', args: unknown, extra: Reco
     const t = setTimeout(() => {
       waiting.delete(id)
       reject(new Error('clean desktop helper timed out'))
-    }, 15_000)
+    }, action === 'restore' ? 45_000 : 15_000)
     waiting.set(id, {
       resolve: (v) => {
         clearTimeout(t)
@@ -335,7 +365,7 @@ async function viaServer(action: 'apply' | 'restore', args: unknown, extra: Reco
   })
 }
 
-function viaOneShot(action: 'apply' | 'restore', args: unknown): Promise<string> {
+function viaOneShot(action: Action, args: unknown): Promise<string> {
   const script = writeScript('desk.ps1', ONE_SHOT_SCRIPT)
   const argsFile = path.join(dir(), `${action}-args.json`)
   fs.writeFileSync(argsFile, JSON.stringify(args), 'utf8')
@@ -352,13 +382,16 @@ function viaOneShot(action: 'apply' | 'restore', args: unknown): Promise<string>
   })
 }
 
-async function run(action: 'apply' | 'restore', args: unknown): Promise<unknown> {
+async function run(action: Action, args: unknown): Promise<unknown> {
   const extra = { stateFile: stateFile(), backupDir: dir() }
   try {
     const r = await viaServer(action, args, extra)
     if (r !== undefined) return r
   } catch (e) {
     console.error('clean desktop helper failed, falling back', e)
+    // A slow (not dead) helper is still the fastest option: don't start a competing PowerShell.
+    // Restores always fall back: the user's desktop must come back no matter what.
+    if (action === 'apply' && server && /timed out/.test(String(e))) throw e
   }
   const out = await viaOneShot(action, args)
   return JSON.parse(out.split(/\r?\n/).filter(Boolean).pop() || '{}')
@@ -456,6 +489,13 @@ export async function restoreCleanDesktop(state?: CleanState | null): Promise<vo
 
 export function hasPendingRestore(): boolean {
   return fs.existsSync(stateFile())
+}
+
+/** Recognise text in an image file with the Windows OCR engine. */
+export async function ocrImage(file: string): Promise<string> {
+  if (!isSupported()) throw new Error('Text extraction needs Windows 10 or later')
+  const r = (await run('ocr', { path: file })) as { text?: string }
+  return r?.text ?? ''
 }
 
 export const wallpaperFile = (): string => path.join(app.getPath('userData'), 'studio-wallpaper.png')

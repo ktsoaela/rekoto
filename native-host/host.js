@@ -3,8 +3,16 @@
 // It relays messages to the running desktop app over a named pipe.
 'use strict'
 const net = require('net')
+const fs = require('fs')
+const path = require('path')
 
-const PIPE = '\\\\.\\pipe\\Rekoto-bridge'
+const PIPE = process.env.REKOTO_PIPE || '\\\\.\\pipe\\Rekoto-bridge'
+try {
+  const log = path.join(process.env.APPDATA || '', 'Rekoto', 'native-host', 'host.log')
+  fs.appendFileSync(log, `${new Date().toISOString()} host.js start\n`)
+} catch (_) {
+  /* ignore */
+}
 let socket = null
 let connected = false
 let queue = []
@@ -58,14 +66,35 @@ function connect() {
   })
 }
 
-let inBuf = Buffer.alloc(0)
+// Collect chunks without re-copying: screenshots can be tens of megabytes.
+let chunks = []
+let have = 0
+let need = -1
+function take(n) {
+  const out = Buffer.allocUnsafe(n)
+  let off = 0
+  while (off < n) {
+    const c = chunks[0]
+    const k = Math.min(c.length, n - off)
+    c.copy(out, off, 0, k)
+    off += k
+    if (k === c.length) chunks.shift()
+    else chunks[0] = c.subarray(k)
+  }
+  have -= n
+  return out
+}
 process.stdin.on('data', (chunk) => {
-  inBuf = Buffer.concat([inBuf, chunk])
-  while (inBuf.length >= 4) {
-    const len = inBuf.readUInt32LE(0)
-    if (inBuf.length < 4 + len) break
-    const body = inBuf.subarray(4, 4 + len).toString('utf8')
-    inBuf = inBuf.subarray(4 + len)
+  chunks.push(chunk)
+  have += chunk.length
+  for (;;) {
+    if (need < 0) {
+      if (have < 4) break
+      need = take(4).readUInt32LE(0)
+    }
+    if (have < need) break
+    const body = take(need).toString('utf8')
+    need = -1
     try {
       sendToApp(JSON.parse(body))
     } catch (_) {

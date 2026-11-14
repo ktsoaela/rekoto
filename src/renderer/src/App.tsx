@@ -84,7 +84,8 @@ export default function App() {
       <header className="topbar">
         <div className="topbar-brand">
           <span className="brand-mark" aria-hidden>
-            R<i />
+            <Icon name="camera" size={20} />
+            <i />
           </span>
           <span className="brand-name">Rekoto</span>
         </div>

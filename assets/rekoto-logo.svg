@@ -4,16 +4,17 @@
       <stop offset="0%" stop-color="#2a2418"/>
       <stop offset="100%" stop-color="#0f0e0c"/>
     </linearGradient>
-    <linearGradient id="r" x1="140" y1="120" x2="380" y2="400" gradientUnits="userSpaceOnUse">
+    <linearGradient id="cam" x1="96" y1="120" x2="400" y2="400" gradientUnits="userSpaceOnUse">
       <stop offset="0%" stop-color="#ffe566"/>
-      <stop offset="45%" stop-color="#f5c518"/>
+      <stop offset="50%" stop-color="#f5c518"/>
       <stop offset="100%" stop-color="#d4a017"/>
     </linearGradient>
   </defs>
   <rect width="512" height="512" rx="118" fill="url(#plate)"/>
-  <path fill="url(#r)" d="
-    M148 128h132c62 0 104 36 104 90 0 42-24 74-64 86l72 108h-74l-64-100h-42v100h-64V128zm64 56v76h66c28 0 46-16 46-38s-18-38-46-38H212z
-  "/>
-  <circle cx="372" cy="372" r="36" fill="#dc2626"/>
-  <circle cx="372" cy="372" r="36" fill="none" stroke="#fecaca" stroke-opacity="0.4" stroke-width="6"/>
+  <!-- Same geometry as the in-app camera icon: body + side wedge -->
+  <g transform="translate(64 96) scale(16)">
+    <path fill="url(#cam)" d="M3 6h12v12H3z"/>
+    <path fill="url(#cam)" d="M15 10l5-3v10l-5-3z"/>
+  </g>
+  <circle cx="132" cy="380" r="28" fill="#dc2626"/>
 </svg>

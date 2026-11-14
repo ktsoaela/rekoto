@@ -30,6 +30,8 @@ interface Session {
   display: Display
   layout: Layout
   track: Track | null
+  /** Part of the page viewport to keep (CSS px), from the extension's custom-area mode. */
+  region: { x: number; y: number; w: number; h: number } | null
   clean: CleanState | null
   /** Clean-desktop apply in flight; teardown awaits it so a fast cancel still restores the desktop. */
   cleanP: Promise<CleanState | null>
@@ -179,7 +181,12 @@ export class RecordingManager {
     return { options: s.options, settings: getSettings(), layout: s.layout }
   }
 
-  async start(options: StartOptions, from?: { browser: BrowserName; title: string; info: ViewportInfo | null }): Promise<void> {
+  async start(
+    options: StartOptions,
+    from?: { browser: BrowserName; title: string; info: ViewportInfo | null; region?: { x: number; y: number; w: number; h: number } },
+    /** Slow lookups (window lists, device names) that may run during the countdown instead of before it. */
+    resolve?: () => Promise<Partial<StartOptions>>
+  ): Promise<void> {
     if (this.active) throw new Error('A recording is already in progress')
     const settings = getSettings()
     updateSettings({ lastMode: options.mode })
@@ -214,6 +221,7 @@ export class RecordingManager {
       display,
       layout: { crop: null, camera: null },
       track,
+      region: from?.region && from.region.w > 4 && from.region.h > 4 ? from.region : null,
       clean: null,
       cleanP: Promise.resolve(null),
       recorder: null,
@@ -226,7 +234,6 @@ export class RecordingManager {
       canceled: false
     }
     this.s = s
-    if (from?.info) s.layout.crop = this.computeCrop(from.info)
 
     try {
       this.getMainWindow()?.hide()
@@ -238,6 +245,11 @@ export class RecordingManager {
       else this.sendPhase(s, { phase: 'prep', n: 0 })
 
       // 2) Everything else runs in parallel with the countdown.
+      if (resolve) {
+        Object.assign(options, await resolve())
+        if (this.s !== s) return
+      }
+      if (from?.info) s.layout.crop = this.computeCrop(from.info)
       if (options.cleanDesktop) {
         const keep = options.keepWindowIds.map(hwndOf).filter((n): n is number => n != null)
         if (options.mode === 'window' && options.sourceId) {
@@ -260,9 +272,12 @@ export class RecordingManager {
       })
       this.arm(s)
 
+      // Clean desktop gets a time budget: on a busy PC it must not hold the recording hostage.
+      // If it is still applying, recording starts anyway and the restore still waits for it.
+      const cleanBudget = Promise.race([s.cleanP, countdownDone.then(() => wait(1500)).then(() => null)])
       const prepared = Promise.all([
         withTimeout(s.ready.promise, 20_000, 'Recorder did not start (camera, microphone or screen unavailable)'),
-        s.cleanP
+        cleanBudget
       ])
 
       await countdownDone
@@ -276,15 +291,18 @@ export class RecordingManager {
       const [mime, clean] = await prepared
       if (this.s !== s) return
       s.mime = mime
-      s.clean = clean
+      if (clean) s.clean = clean
+      else void s.cleanP.then((c) => { if (c && this.s === s) s.clean = c })
 
       // 3) Go. The encoder already warmed up during the countdown, so this is instant.
       s.recorder?.webContents.send('recorder:command', 'begin')
       this.hideCountdown(s)
-      s.controls = this.showControls(display)
+      if (options.showControls !== false) s.controls = this.showControls(display)
       this.registerShortcuts()
       this.setState({ status: 'recording', startedAt: Date.now(), pausedMs: 0, pausedAt: null })
     } catch (e) {
+      // Cancelled (or replaced) while starting: that session is already torn down, so stay quiet.
+      if (this.s !== s) return
       await this.fail(e as Error)
       throw e
     }
@@ -359,9 +377,14 @@ export class RecordingManager {
       fs.mkdirSync(settings.saveFolder, { recursive: true })
       const title = (s.options.title ?? '').replace(/[<>:"/\\|?*\x00-\x1f]/g, '').replace(/\s+/g, ' ').trim().slice(0, 120)
       const base = title || `Recording ${fileStamp()}`
-      let target = path.join(settings.saveFolder, `${base}.mp4`)
-      for (let i = 2; fs.existsSync(target); i++) target = path.join(settings.saveFolder, `${base} (${i}).mp4`)
-      const encodeP = toMp4(s.tmpPath, target, /h264|avc1/i.test(s.mime), settings.fps)
+      const ext = s.options.format === 'webm' ? 'webm' : 'mp4'
+      let target = path.join(settings.saveFolder, `${base}.${ext}`)
+      for (let i = 2; fs.existsSync(target); i++) target = path.join(settings.saveFolder, `${base} (${i}).${ext}`)
+      // WebM is already what MediaRecorder writes, so it is saved as-is (instant).
+      const encodeP =
+        ext === 'webm'
+          ? fs.promises.copyFile(s.tmpPath, target).then(() => target)
+          : toMp4(s.tmpPath, target, /h264|avc1/i.test(s.mime), settings.fps)
       const [out] = await Promise.all([encodeP, restoreP])
       saved = out
       fs.rmSync(s.tmpPath, { force: true })
@@ -514,10 +537,18 @@ export class RecordingManager {
     const s = this.s
     if (!s || !getSettings().cropBrowserChrome || v.outerWidth <= 0 || v.outerHeight <= 0) return null
     const z = v.zoom || 1
-    const innerW = v.innerWidth * z
-    const innerH = v.innerHeight * z
-    const border = Math.max(0, (v.outerWidth - innerW) / 2)
-    const topUi = Math.max(0, v.outerHeight - innerH - border)
+    let innerW = v.innerWidth * z
+    let innerH = v.innerHeight * z
+    let border = Math.max(0, (v.outerWidth - innerW) / 2)
+    let topUi = Math.max(0, v.outerHeight - innerH - border)
+    // Custom area: shrink the page rect to the region the user drew (CSS px inside the viewport).
+    const r = s.region
+    if (r) {
+      border += Math.max(0, r.x) * z
+      topUi += Math.max(0, r.y) * z
+      innerW = Math.min(innerW, r.w * z)
+      innerH = Math.min(innerH, r.h * z)
+    }
     if (s.options.mode === 'window') {
       return clampRect({ x: border / v.outerWidth, y: topUi / v.outerHeight, w: innerW / v.outerWidth, h: innerH / v.outerHeight })
     }

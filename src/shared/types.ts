@@ -72,6 +72,10 @@ export interface StartOptions {
   displayId?: string
   /** Optional video title, used as the file name. */
   title?: string
+  /** Output container; WebM skips conversion entirely. Default mp4. */
+  format?: 'mp4' | 'webm'
+  /** Show the floating control bar (default true). Shortcuts work either way. */
+  showControls?: boolean
 }
 
 export interface Rect {
